@@ -1,154 +1,191 @@
 // utils.js
-// -------------------------------------------------------
-// Touching Light — Quiet Luxury / Utilities
+// ------------------------------------------------------------
+// Utilities (v1.1)
 // 目的：
-// - “意味”のある補助関数をまとめ、作品ロジックから分離する
-// - 端末差/乱数/角度/呼吸(時間) を安定させる
-// -------------------------------------------------------
+// - “美しい複雑さ”を支える共通部（乱数/ノイズ/補間/色/ガンマ/ベクトル）
+// - iPhoneでも軽い：依存なし・関数は小さく・必要なものだけ
+//
+// 使い方：
+// - 既存コードが utils の関数名に依存していても壊れにくいよう、
+//   window.Utils にまとめつつ、よく使う関数はグローバルにも薄く露出。
+// ------------------------------------------------------------
 
-/**
- * clamp: 範囲に収める
- */
-function clamp(v, a, b) {
-  return Math.max(a, Math.min(b, v));
-}
+(function () {
+  const TAU = Math.PI * 2;
 
-/**
- * saturate: 0..1に収める
- */
-function saturate(v) {
-  return clamp(v, 0, 1);
-}
+  // ------------------------------------------------------------
+  // Math
+  // ------------------------------------------------------------
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const invLerp = (a, b, v) => (b - a !== 0 ? (v - a) / (b - a) : 0);
+  const remap = (v, inA, inB, outA, outB) => outA + (outB - outA) * clamp(invLerp(inA, inB, v), 0, 1);
 
-/**
- * lerp01: 0..1のtで補間
- */
-function lerp01(a, b, t) {
-  return a + (b - a) * t;
-}
+  const smoothstep = (a, b, x) => {
+    const t = clamp((x - a) / (b - a), 0, 1);
+    return t * t * (3 - 2 * t);
+  };
+  const smootherstep = (a, b, x) => {
+    const t = clamp((x - a) / (b - a), 0, 1);
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  };
 
-/**
- * smoothstep: 0..1の滑らかな補間（端が滑る）
- */
-function smoothstep(edge0, edge1, x) {
-  const t = saturate((x - edge0) / (edge1 - edge0));
-  return t * t * (3 - 2 * t);
-}
+  const fract = (x) => x - Math.floor(x);
 
-/**
- * remap: 範囲変換
- */
-function remap(x, in0, in1, out0, out1) {
-  const t = (x - in0) / (in1 - in0);
-  return out0 + (out1 - out0) * t;
-}
+  // ------------------------------------------------------------
+  // RNG (xorshift32) – fast & deterministic
+  // ------------------------------------------------------------
+  function RNG(seed) {
+    this.s = (seed >>> 0) || 1;
+  }
+  RNG.prototype.next = function () {
+    let x = this.s;
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    this.s = x >>> 0;
+    return (this.s & 0xffffffff) / 0x100000000;
+  };
+  RNG.prototype.range = function (a, b) { return a + (b - a) * this.next(); };
+  RNG.prototype.int = function (a, b) { return (this.range(a, b + 1) | 0); };
+  RNG.prototype.sign = function () { return this.next() < 0.5 ? -1 : 1; };
+  RNG.prototype.pick = function (arr) { return arr[(arr.length * this.next()) | 0]; };
 
-/**
- * angleLerp: 角度を最短経路で補間（-PI..PIのラップを考慮）
- */
-function angleLerp(a, b, t) {
-  let d = ((b - a + Math.PI) % (TAU)) - Math.PI;
-  return a + d * t;
-}
+  // ------------------------------------------------------------
+  // Hash / value noise (lightweight)
+  // ------------------------------------------------------------
+  const hash1 = (x) => fract(Math.sin(x) * 43758.5453123);
+  const hash2 = (x, y) => fract(Math.sin(x * 127.1 + y * 311.7) * 43758.5453123);
+  const hash3 = (x, y, z) => fract(Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453123);
 
-/**
- * dist2: 2D距離の二乗（sqrtを避けたい時）
- */
-function dist2(x1, y1, x2, y2) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  return dx * dx + dy * dy;
-}
+  const vnoise2 = (x, y) => {
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    const x1 = x0 + 1, y1 = y0 + 1;
+    const sx = x - x0, sy = y - y0;
 
-/**
- * safeNorm: ベクトル正規化（ゼロ割回避）
- */
-function safeNorm(x, y, eps = 1e-6) {
-  const m = Math.sqrt(x * x + y * y);
-  if (m < eps) return { x: 0, y: 0, m: 0 };
-  return { x: x / m, y: y / m, m };
-}
+    const n00 = hash2(x0, y0);
+    const n10 = hash2(x1, y0);
+    const n01 = hash2(x0, y1);
+    const n11 = hash2(x1, y1);
 
-/**
- * edgeFade01:
- * 画面の端に近いほど暗くする係数（白飽和対策の基本部品）
- * - 1 = 中央
- * - EDGE_FADE_MIN 近辺 = 端
- */
-function edgeFade01(x, y, w, h) {
-  const edge = Math.min(x, w - x, y, h - y);
-  const t = saturate(edge / CFG.EDGE_FADE_PX);
-  // 端で急に落ちると“人工的”になるので smoothstep を使う
-  const s = smoothstep(0, 1, t);
-  return lerp01(CFG.EDGE_FADE_MIN, 1, s);
-}
+    const ux = sx * sx * (3 - 2 * sx);
+    const uy = sy * sy * (3 - 2 * sy);
 
-/**
- * exposureCap:
- * alpha（発光強度）が高すぎて白飽和しそうなとき抑える
- * 単純clampより“柔らかく抑える”ためのカーブ
- */
-function exposureCap(a, cap = CFG.LIGHT_ALPHA_CAP) {
-  if (a <= cap) return a;
-  // 超過分を圧縮する（ソフトクリップ）
-  const over = a - cap;
-  return cap + over * 0.25; // ここを0.2〜0.35で調整可能
-}
+    const ix0 = lerp(n00, n10, ux);
+    const ix1 = lerp(n01, n11, ux);
+    return lerp(ix0, ix1, uy);
+  };
 
-/**
- * breath01:
- * 0..1 の呼吸。CFG.BREATH_PERIOD_MS 周期でゆっくり変化
- * 作品の「息」を統一する基礎リズム。
- */
-function breath01() {
-  const ms = CFG.BREATH_PERIOD_MS;
-  const t = (millis() % ms) / ms;
-  return 0.5 - 0.5 * Math.cos(TAU * t);
-}
-
-/**
- * seededInit:
- * 乱数・ノイズを安定化（環境差を減らす）
- * 同じseedなら見た目が再現される
- */
-function seededInit(seed) {
-  randomSeed(seed);
-  noiseSeed(seed);
-}
-
-/**
- * makeSeed:
- * 端末・画面サイズ・時刻を混ぜたseedを作る
- */
-function makeSeed(w, h) {
-  // Date.nowの変化を入れつつ、画面サイズも混ぜて“作品ごとの個体差”を出す
-  return (Date.now() ^ (w << 1) ^ (h << 2)) >>> 0;
-}
-
-/**
- * nowMs:
- * 単にmillis()を使うが、抽象化しておく（将来差し替えやすい）
- */
-function nowMs() {
-  return millis();
-}
-
-/**
- * isTouchDevice:
- * タッチデバイス推定（過信しない）
- */
-function isTouchDevice() {
-  return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-}
-
-/**
- * tlHook:
- * index.html 側の __TL__ hook があれば呼び出す（なくても安全）
- */
-function tlHook(name, ...args) {
-  try {
-    if (window.__TL__ && typeof window.__TL__[name] === 'function') {
-      window.__TL__[name](...args);
+  // fbm: 薄い“にじみ”のような複雑さ（使いすぎ注意）
+  const fbm2 = (x, y, oct = 4, lac = 2.0, gain = 0.5) => {
+    let amp = 0.5;
+    let freq = 1.0;
+    let sum = 0;
+    let norm = 0;
+    for (let i = 0; i < oct; i++) {
+      sum += amp * (vnoise2(x * freq, y * freq) - 0.5) * 2.0;
+      norm += amp;
+      amp *= gain;
+      freq *= lac;
     }
-  } catch (_) {}
-}
+    return norm > 0 ? (sum / norm) : 0;
+  };
+
+  // curl-ish vector from noise (approx)
+  const curl2 = (x, y, t = 0) => {
+    const e = 0.015;
+    const n1 = vnoise2(x, y + e + t);
+    const n2 = vnoise2(x, y - e + t);
+    const a = (n1 - n2) / (2 * e);
+
+    const n3 = vnoise2(x + e + t, y);
+    const n4 = vnoise2(x - e + t, y);
+    const b = (n3 - n4) / (2 * e);
+
+    let vx = a;
+    let vy = -b;
+    const m = Math.hypot(vx, vy) || 1;
+    vx /= m; vy /= m;
+    return { x: vx, y: vy };
+  };
+
+  // ------------------------------------------------------------
+  // Vector helpers
+  // ------------------------------------------------------------
+  const vecLen = (x, y) => Math.hypot(x, y);
+  const vecNorm = (x, y) => {
+    const m = Math.hypot(x, y) || 1;
+    return { x: x / m, y: y / m };
+  };
+  const vecRot = (x, y, a) => {
+    const c = Math.cos(a), s = Math.sin(a);
+    return { x: x * c - y * s, y: x * s + y * c };
+  };
+
+  // ------------------------------------------------------------
+  // Color helpers (simple, gamma-aware)
+  // ------------------------------------------------------------
+  const srgbToLin = (c) => {
+    c = c / 255;
+    return c <= 0.04045 ? (c / 12.92) : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const linToSrgb = (c) => {
+    c = clamp(c, 0, 1);
+    return (c <= 0.0031308 ? (c * 12.92) : (1.055 * Math.pow(c, 1 / 2.4) - 0.055)) * 255;
+  };
+
+  // gamma-correct lerp for colors
+  const mixRGB = (c1, c2, t) => {
+    const r1 = srgbToLin(c1[0]), g1 = srgbToLin(c1[1]), b1 = srgbToLin(c1[2]);
+    const r2 = srgbToLin(c2[0]), g2 = srgbToLin(c2[1]), b2 = srgbToLin(c2[2]);
+    const r = lerp(r1, r2, t);
+    const g = lerp(g1, g2, t);
+    const b = lerp(b1, b2, t);
+    return [linToSrgb(r), linToSrgb(g), linToSrgb(b)];
+  };
+
+  // rgba string
+  const rgba = (r, g, b, a) => `rgba(${r|0},${g|0},${b|0},${a})`;
+
+  // ------------------------------------------------------------
+  // Palette (控えめ：緑と紫を “縁” にだけ)
+  // ------------------------------------------------------------
+  const Palette = {
+    deep:  [5, 7, 13],
+    ink:   [12, 16, 34],
+    mist:  [245, 248, 255],
+    pale:  [232, 238, 250],
+    green: [90, 255, 170],
+    purple:[170, 120, 255],
+  };
+
+  // ------------------------------------------------------------
+  // Expose
+  // ------------------------------------------------------------
+  const Utils = {
+    TAU,
+
+    clamp, lerp, invLerp, remap,
+    smoothstep, smootherstep,
+    fract,
+
+    RNG,
+    hash1, hash2, hash3,
+    vnoise2, fbm2, curl2,
+
+    vecLen, vecNorm, vecRot,
+
+    srgbToLin, linToSrgb,
+    mixRGB, rgba,
+
+    Palette,
+  };
+
+  window.Utils = Utils;
+
+  // 既存ファイルとの互換用に、よく使うものだけ“薄く”グローバル公開（安全寄り）
+  // ※すでに同名がある場合は上書きしない
+  if (typeof window.clamp === "undefined") window.clamp = clamp;
+  if (typeof window.lerp === "undefined") window.lerp = lerp;
+  if (typeof window.smoothstep === "undefined") window.smoothstep = smoothstep;
+})();
