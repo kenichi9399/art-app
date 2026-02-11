@@ -1,196 +1,342 @@
 // void_shadow.js
-// -------------------------------------------------------
-// Touching Light — Quiet Luxury / Void & Shadow
-// 役割：
-// - VOID（空の抜け＝余白の光学）… “上へ広がる”
-// - SHADOW（人ではない何かの長い影）… “地上の重み”
-// - 互いに侵食し合う：抜けが影を削り、影が抜けの輪郭を際立てる
-// -------------------------------------------------------
+// ------------------------------------------------------------
+// Void + Long Shadow (v1.1)
+// 目的：
+// - “円”を主役にしない：光の抜け＝空の余白の形としてVoidを作る
+// - 長い影：地上に落ちるが、人ではなく「何か分からない」存在感
+// - 筆致：にじみ/かすれ/欠けた輪郭、層としての影
+//
+// 依存：CFG（cfg.js） / Render（render.js）※あれば bloomStamp を呼ぶ
+//
+// API:
+//   VoidShadow.init(w,h)
+//   VoidShadow.resize(w,h)
+//   VoidShadow.step(dt)
+//   VoidShadow.draw(gBase, gLight?)   // gLight は任意
+//   VoidShadow.getCenter()            // {x,y,r}
+//
+// ------------------------------------------------------------
 
-let hole = { x: 0, y: 0, r: 0 };             // VOID中心と半径
-let shadowRoot = { x: 0, y: 0, ang: -0.35 }; // 影の根（起点）と向き
+(function () {
+  const TAU = Math.PI * 2;
 
-/**
- * initVoidShadow
- * 画面サイズに基づき初期配置
- */
-function initVoidShadow(w, h) {
-  // 端末幅に応じて半径を調整（大きすぎ/小さすぎの破綻防止）
-  const base = CFG.VOID_R;
-  const scaled = base * (Math.min(w, h) / 780); // 780px基準（だいたいスマホ縦）
-  hole.r = clamp(scaled, CFG.VOID_R_MIN, CFG.VOID_R_MAX);
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const smoothstep = (a, b, x) => {
+    const t = clamp((x - a) / (b - a), 0, 1);
+    return t * t * (3 - 2 * t);
+  };
 
-  // “空”は少し左上寄り（上へ広がる余白が出る）
-  hole.x = w * 0.36;
-  hole.y = h * 0.30;
+  // lightweight hash noise
+  const fract = (x) => x - Math.floor(x);
+  const hash = (x) => fract(Math.sin(x) * 43758.5453123);
+  const hash2 = (x, y) => fract(Math.sin(x * 127.1 + y * 311.7) * 43758.5453123);
 
-  // 影の根は右下寄り（地上の重み）
-  shadowRoot.x = w * 0.62;
-  shadowRoot.y = h * 0.78;
-  shadowRoot.ang = -0.35;
-}
+  const vnoise2 = (x, y) => {
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    const x1 = x0 + 1, y1 = y0 + 1;
+    const sx = x - x0, sy = y - y0;
 
-/**
- * updateVoidShadow
- * 時間変化（息/揺らぎ）と、影の向きの更新
- */
-function updateVoidShadow(w, h, breathe, praying) {
-  const tt = frameCount * 0.0038;
+    const n00 = hash2(x0, y0);
+    const n10 = hash2(x1, y0);
+    const n01 = hash2(x0, y1);
+    const n11 = hash2(x1, y1);
 
-  // VOIDは“わずかに”揺らす。揺らしすぎるとチープになるので小さめ。
-  hole.x = w * 0.36 + (noise(tt, 1.3) - 0.5) * 28;
-  hole.y = h * 0.30 + (noise(tt, 7.9) - 0.5) * 24;
+    const ux = sx * sx * (3 - 2 * sx);
+    const uy = sy * sy * (3 - 2 * sy);
 
-  // 影方向：VOIDに引かれるが、少し迷う（非人間的なズレ）
-  const target = atan2(hole.y - shadowRoot.y, hole.x - shadowRoot.x);
-  const sway = (noise(tt, 4.2) - 0.5) * 0.25;
-  const pull = praying ? 0.022 : 0.013;
+    const ix0 = lerp(n00, n10, ux);
+    const ix1 = lerp(n01, n11, ux);
+    return lerp(ix0, ix1, uy);
+  };
 
-  shadowRoot.ang = angleLerp(shadowRoot.ang, target + sway, pull);
-}
+  // ------------------------------------------------------------
+  // VoidShadow object
+  // ------------------------------------------------------------
+  function VS() {
+    this.w = 0; this.h = 0;
+    this.cx = 0; this.cy = 0;
+    this.r = 130;
 
-/**
- * drawVoid
- * 光レイヤーに “抜け” を描く
- */
-function drawVoid(g, w, h, breathe, praying) {
-  g.push();
-  g.blendMode(SCREEN);
-  g.noStroke();
+    this.t = 0;
+    this.phase = 0;
 
-  const baseR = hole.r * (praying ? 1.10 : 1.0) * (0.96 + breathe * CFG.VOID_BREATHE);
-
-  for (let i = CFG.VOID_LAYERS; i >= 1; i--) {
-    const u = i / CFG.VOID_LAYERS; // 1..0
-    const rr = baseR * u;
-
-    // “層が少し歪む”ことで絵画的な揺らぎ
-    const warp = (1 - u) * CFG.VOID_WARP * (1.1 + breathe);
-    const wx = (noise(u * 3.0, frameCount * 0.01) - 0.5) * baseR * warp;
-    const wy = (noise(u * 3.0 + 9.7, frameCount * 0.01) - 0.5) * baseR * warp;
-
-    // 紫は遠層の気配として薄く（あくまで“少し”）
-    const purple = 255 * CFG.HINT_PURPLE * (1 - u) * (praying ? 1.2 : 1.0);
-    const a = (1 - u) * (praying ? 96 : 72);
-
-    g.fill(210 + purple * 0.10, 235, 255 - purple * 0.45, a);
-    g.ellipse(hole.x + wx, hole.y + wy, rr * 2.20, rr * 2.20 * 1.06);
+    // cache for shape points
+    this.pts = [];
+    this.pts2 = [];
   }
 
-  // 長押し（祈り）中：縁に澄む粒（場が静まる）
-  if (praying) {
-    g.fill(235, 250, 255, 18);
-    for (let j = 0; j < 10; j++) {
-      const ang = random(TAU);
-      const rr = baseR * (0.86 + random() * 0.20);
-      g.ellipse(hole.x + cos(ang) * rr, hole.y + sin(ang) * rr, 18, 18);
+  VS.prototype.init = function (w, h) {
+    this.resize(w, h);
+    this.t = 0;
+    this.phase = hash(w * 0.001 + h * 0.002) * 1000;
+  };
+
+  VS.prototype.resize = function (w, h) {
+    this.w = w; this.h = h;
+    // “左上の白塊”が気になる → 中心は少しだけ左上寄り、ただし寄せすぎない
+    this.cx = w * 0.46;
+    this.cy = h * 0.37;
+
+    const vr = (window.CFG && CFG.VOID_R) || 130;
+    this.r = vr;
+  };
+
+  VS.prototype.step = function (dt) {
+    const dtn = dt ? clamp(dt, 0.5, 2.0) : 1.0;
+    this.t += 0.0105 * dtn;
+  };
+
+  // “円”ではなく「空の抜け」の輪郭を作る（ノイズで欠け/にじみ）
+  VS.prototype._buildVoidContour = function (count, warp, warp2) {
+    const pts = this.pts;
+    const pts2 = this.pts2;
+    pts.length = 0;
+    pts2.length = 0;
+
+    const r0 = this.r;
+    const t = this.t + this.phase;
+
+    // 輪郭の“欠け”を作る帯（=余白の抜け）
+    const gapA = (t * 0.22) % TAU;
+    const gapW = 0.55; // 欠け幅（ラジアン）
+    const gapB = gapA + gapW;
+
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * TAU;
+
+      // 欠け判定：完全に消すのではなく「薄くなる」→筆致っぽい
+      let gap = 0.0;
+      if (a > gapA && a < gapB) gap = 1.0;
+      // wrap-around
+      if (gapB > TAU && a < (gapB - TAU)) gap = 1.0;
+      const gapSoft = smoothstep(1.0, 0.0, Math.abs((a - gapA) / gapW)); // 端ほど薄く
+
+      // ノイズで輪郭を歪ませる（円をやめる）
+      const n1 = vnoise2(Math.cos(a) * 1.7 + t * 0.8, Math.sin(a) * 1.7 + t * 0.8);
+      const n2 = vnoise2(Math.cos(a) * 3.1 + 22.0 + t * 0.35, Math.sin(a) * 3.1 + 7.0 + t * 0.35);
+
+      // 歪み量（強すぎると“怪物”になるので上品に）
+      const bulge = (n1 - 0.5) * warp + (n2 - 0.5) * warp2;
+
+      // 欠け帯では半径を減らし、さらにノイズで“薄膜”にする
+      const gapPull = gap * (0.20 + 0.10 * (n2));
+      const rr = r0 * (1 + bulge) * (1 - gapPull);
+
+      const x = this.cx + Math.cos(a) * rr;
+      const y = this.cy + Math.sin(a) * rr;
+
+      pts.push([x, y, 1 - gap * 0.7 * (0.6 + 0.4 * gapSoft)]);
+
+      // 内側のもう1輪郭（薄い膜）
+      const rr2 = r0 * 0.72 * (1 + bulge * 0.7) * (1 - gapPull * 1.25);
+      const x2 = this.cx + Math.cos(a) * rr2;
+      const y2 = this.cy + Math.sin(a) * rr2;
+      pts2.push([x2, y2, 1 - gap * 0.85]);
     }
-  }
+  };
 
-  g.pop();
-}
+  // 長い影の“芯”となる方向（固定にせず、ゆっくり揺らす）
+  VS.prototype._shadowDir = function () {
+    const t = this.t + this.phase;
+    // 下方向をベースに、少し右へ・時々左へ揺れる
+    const ang = (Math.PI * 0.54) + Math.sin(t * 0.27) * 0.10 + Math.sin(t * 0.09) * 0.06;
+    return { x: Math.cos(ang), y: Math.sin(ang) };
+  };
 
-/**
- * drawShadow
- * 影レイヤーに “長い影” を描く
- */
-function drawShadow(g, w, h, breathe, praying) {
-  g.push();
-  g.blendMode(BLEND);
+  VS.prototype.draw = function (gBase, gLight) {
+    const cfg = window.CFG || {};
+    const t = this.t + this.phase;
 
-  const len = h * CFG.SH_LEN * (0.95 + breathe * 0.08);
-  const alpha = (praying ? CFG.SH_ALPHA * 0.78 : CFG.SH_ALPHA) * (0.85 + breathe * 0.25);
+    // 1) 輪郭生成（“空の抜け”）
+    const warp = cfg.VOID_WARP ?? 0.13;
+    const warp2 = (cfg.VOID_WARP ?? 0.13) * 0.65;
+    const count = 96;
+    this._buildVoidContour(count, warp, warp2);
 
-  // 根の微揺れ（生々しくならない程度）
-  const t = frameCount * 0.003;
-  const rx = shadowRoot.x + (noise(t, 9.1) - 0.5) * 10;
-  const ry = shadowRoot.y + (noise(t, 3.7) - 0.5) * 8;
+    // 2) 空の抜け（中心の余白）を作る：暗い“穴”ではなく、微妙に明るい“空気”
+    //    → 余白が「抜け」として見える
+    const coreBreathe = (cfg.VOID_BREATHE ?? 0.16);
+    const raise = (cfg.VOID_RAISE ?? 0.46);
+    const breathe = 0.5 + 0.5 * Math.sin(t * 0.85);
+    const lift = raise * (0.78 + 0.22 * breathe);
 
-  g.translate(rx, ry);
-  g.rotate(shadowRoot.ang);
-  g.noStroke();
+    gBase.push();
+    gBase.noStroke();
 
-  // ---- 主帯（断続する帯）----
-  for (let i = 0; i < len; i += 10) {
-    const k = i / len;
+    // 余白のベース：深い群青の“薄い明度”
+    // これが「黒い穴」じゃなく「光が抜けた空」になる
+    const baseA = 26 + lift * 40; // 26-66
+    gBase.fill(12, 16, 34, baseA);
+    this._fillShape(gBase, this.pts);
 
-    // 幅のうねり（筆の“かすれ”を作る）
-    let w0 = lerp(CFG.SH_W0, CFG.SH_W1, k);
-    w0 *= (0.92 + noise(k * 2.2, t) * 0.18);
-    w0 += (noise(k * 7.2, t * 1.7) - 0.5) * 120;
+    // 余白の膜（内側）：さらに薄く
+    gBase.fill(16, 20, 44, (baseA * 0.55));
+    this._fillShape(gBase, this.pts2);
 
-    // 欠け（単調さ回避）
-    if (noise(k * 6.0, t * 1.1) < CFG.SH_GAPS) continue;
+    gBase.pop();
 
-    // ワールド位置で“抜けへの侵食”を評価（近いほど影が削がれる）
-    const wx = rx + (-sin(shadowRoot.ang)) * i;
-    const wy = ry + ( cos(shadowRoot.ang)) * i;
-    const er = Math.max(0, 1 - dist(wx, wy, hole.x, hole.y) / (hole.r * 1.22));
-    const erode = Math.pow(er, 1.35) * CFG.SH_ERODE * (praying ? 1.05 : 1.0);
+    // 3) 輪郭の“筆致”（かすれ）：線を連続にしない
+    gBase.push();
+    gBase.noFill();
+    gBase.strokeCap(gBase.ROUND);
+    gBase.strokeJoin(gBase.ROUND);
 
-    const ww = w0 * (1 - erode * 0.86);
-    let a = alpha * (1 - k) * (1 - erode * 0.78);
+    // 外縁：薄い白（真っ白にしない）
+    gBase.stroke(242, 246, 252, 32);
+    gBase.strokeWeight(1.2);
+    this._strokeSketchy(gBase, this.pts, 0.18);
 
-    // 端の“濃すぎ”を少し抑える
-    a *= clamp((0.65 + 0.35 * noise(k * 2.1, t * 0.7)), 0.55, 1.0);
+    // 内縁：さらに薄い
+    gBase.stroke(235, 240, 250, 22);
+    gBase.strokeWeight(0.9);
+    this._strokeSketchy(gBase, this.pts2, 0.22);
 
-    if (ww <= 7 || a <= 1) continue;
+    gBase.pop();
 
-    // 不完全な輪郭（かすれ）
-    const sx = (noise(k * 3.1, t * 1.4) - 0.5) * 26;
-    const jag = (noise(k * 9.2, t * 1.9) - 0.5) * 26;
+    // 4) 長い影（地上）：中心“そのもの”からではなく、輪郭の一部から伸びる
+    //    → 「何かわからないもの」の影になる
+    const dir = this._shadowDir();
+    const shLen = (cfg.SH_LEN ?? 0.92);
+    const maxLen = Math.min(this.h * shLen, this.h * 0.98);
 
-    g.fill(0, 0, 0, a);
-    g.rect(-ww / 2 + sx, i, ww + jag, 10);
+    // 影の始点を “欠け帯の反対側” に寄せる（祈り/抜けの反対に重み）
+    const anchorA = ((t * 0.22) % TAU) + Math.PI; // 欠けの反対
+    const ax = this.cx + Math.cos(anchorA) * (this.r * 0.86);
+    const ay = this.cy + Math.sin(anchorA) * (this.r * 0.86);
 
-    // 侵食域に“遠層の紫”を混ぜる（黒がただの黒にならない）
-    if (er > 0.20 && random() < 0.18) {
-      g.fill(40, 20, 70, a * 0.22);
-      g.ellipse(sx * 0.5, i, ww * 0.34, 14);
+    // 影は層で描く：芯→周縁→かすれ
+    const layers = cfg.VOID_LAYERS ?? 12;
+    const alphaBase = (cfg.SH_ALPHA ?? 84);
+
+    gBase.push();
+    gBase.noFill();
+    gBase.strokeCap(gBase.ROUND);
+    gBase.strokeJoin(gBase.ROUND);
+
+    for (let k = 0; k < layers; k++) {
+      const kk = k / Math.max(1, layers - 1);
+
+      // 影の幅：上は太く、下へ細る（でも不明瞭）
+      const w0 = (cfg.SH_W0 ?? 280);
+      const w1 = (cfg.SH_W1 ?? 56);
+      const sw = lerp(w0, w1, kk) * (0.85 + 0.30 * (vnoise2(kk * 3.0 + t, 2.7)));
+
+      // 影の濃さ：芯は少し濃いが、全体は上品に
+      const a = alphaBase * (1 - kk) * (0.55 + 0.45 * (vnoise2(kk * 2.0 + 9.0, t * 0.3)));
+
+      // 影の位置：ゆらぎ（にじみ/剥離）
+      const bend = (vnoise2(kk * 2.8 + t * 0.8, 11.0) - 0.5) * 0.38;
+      const ddx = dir.x * maxLen * kk + (-dir.y) * bend * 120;
+      const ddy = dir.y * maxLen * kk + ( dir.x) * bend * 120;
+
+      // “筋”を作りすぎず、帯として不確かに
+      gBase.stroke(0, 0, 0, a);
+      gBase.strokeWeight(Math.max(1.0, sw * 0.028));
+
+      // 一筆のように描く（でもところどころ途切れる）
+      this._shadowStroke(gBase, ax, ay, ax + ddx, ay + ddy, sw, a, kk, t);
     }
-  }
 
-  // ---- 枝（人ではない“何か”）----
-  g.noFill();
-  g.strokeWeight(2);
+    gBase.pop();
 
-  for (let b = 0; b < CFG.SH_BRANCHES; b++) {
-    const kk = b / CFG.SH_BRANCHES;
-    const yy = len * (0.18 + kk * 0.72);
-
-    const baseX = (noise(b * 2.7, t * 1.1) - 0.5) * 210;
-    const ex = baseX + (noise(b * 7.1, t * 1.5) - 0.5) * 240;
-    const ey = yy + (noise(b * 4.3, t * 1.2) - 0.5) * 70;
-
-    // 抜けに近い枝は消える（意味の一貫）
-    const wx = shadowRoot.x + baseX;
-    const wy = shadowRoot.y + yy;
-    const er = Math.max(0, 1 - dist(wx, wy, hole.x, hole.y) / (hole.r * 1.12));
-    if (er > 0.56) continue;
-
-    let a = alpha * (0.42 - kk * 0.26) * (1 - er * 0.62);
-    if (a <= 1) continue;
-
-    g.stroke(0, 0, 0, a);
-
-    // 断続線（完全な輪郭にしない）
-    for (let s = 0; s < 4; s++) {
-      const t0 = s / 4;
-      const t1 = t0 + 0.22;
-      if (noise(b * 3.3, s * 0.9, t * 2.0) < 0.26) continue;
-
-      g.line(
-        lerp(baseX, ex, t0), lerp(yy, ey, t0),
-        lerp(baseX, ex, Math.min(1, t1)), lerp(yy, ey, Math.min(1, t1))
-      );
+    // 5) Light pass（発光）：Render があれば bloomStamp を使う（白飛び防止）
+    if (window.Render && typeof Render.bloomStamp === "function") {
+      const r = this.r * 0.55; // “白塊”を小さめに
+      const alpha = 88 * (0.70 + 0.30 * breathe);
+      Render.bloomStamp(this.cx, this.cy, r, alpha);
+    } else if (gLight) {
+      // fallback：light buffer に薄く描く
+      gLight.push();
+      gLight.noStroke();
+      gLight.fill(245, 248, 255, 18);
+      gLight.circle(this.cx, this.cy, this.r * 0.55);
+      gLight.pop();
     }
+  };
 
-    // 逆光の薄い白（矛盾）— ごく小さく
-    if (random() < 0.08) {
-      g.stroke(230, 245, 255, a * 0.16);
-      g.line(baseX + 1, yy + 1, ex + 1, ey + 1);
+  // shape fill with per-vertex alpha (aFactor) by splitting into bands
+  VS.prototype._fillShape = function (g, pts) {
+    // まとめて塗りたいが alpha が点ごとに違うため、ここでは単一塗り。
+    // aFactor は輪郭の“欠け”用。欠け部分は stroke 側で薄くするので fill は一定。
+    g.beginShape();
+    for (let i = 0; i < pts.length; i++) {
+      g.vertex(pts[i][0], pts[i][1]);
     }
-  }
+    g.endShape(g.CLOSE);
+  };
 
-  g.pop();
-}
+  // sketchy stroke: 不完全な輪郭（かすれ/欠け）
+  VS.prototype._strokeSketchy = function (g, pts, skipProb) {
+    const n = pts.length;
+    for (let i = 0; i < n; i++) {
+      const p0 = pts[i];
+      const p1 = pts[(i + 1) % n];
+
+      // 欠け帯ではスキップ率を上げる
+      const aFactor = p0[2] ?? 1;
+      const sp = skipProb + (1 - aFactor) * 0.38;
+
+      if (Math.random() < sp) continue;
+
+      // わずかに“手ぶれ”
+      const jx = (Math.random() - 0.5) * 0.8;
+      const jy = (Math.random() - 0.5) * 0.8;
+
+      g.line(p0[0] + jx, p0[1] + jy, p1[0] - jx, p1[1] - jy);
+    }
+  };
+
+  // shadow stroke: 帯としての影（端がはっきりしない）
+  VS.prototype._shadowStroke = function (g, x0, y0, x1, y1, width, a, kk, t) {
+    const segs = 10;
+    let px = x0, py = y0;
+
+    for (let s = 1; s <= segs; s++) {
+      const u = s / segs;
+
+      // 中心線
+      let x = lerp(x0, x1, u);
+      let y = lerp(y0, y1, u);
+
+      // 影の揺らぎ（にじみ）
+      const n = vnoise2(u * 3.0 + 20.0, t * 0.2 + kk * 5.0);
+      const side = (n - 0.5) * width * 0.10;
+
+      // 方向に直交した揺らぎ
+      const dx = x1 - x0, dy = y1 - y0;
+      const d = Math.hypot(dx, dy) + 1e-6;
+      const nx = -dy / d;
+      const ny = dx / d;
+
+      x += nx * side;
+      y += ny * side;
+
+      // 途切れ（“何かわからない影”）
+      const gap = (vnoise2(u * 7.0 + kk * 3.0, t * 0.35) > 0.72);
+      if (!gap) {
+        g.line(px, py, x, y);
+      }
+
+      px = x; py = y;
+    }
+  };
+
+  VS.prototype.getCenter = function () {
+    return { x: this.cx, y: this.cy, r: this.r };
+  };
+
+  // ------------------------------------------------------------
+  // Public
+  // ------------------------------------------------------------
+  const inst = new VS();
+
+  window.VoidShadow = {
+    init: (w, h) => inst.init(w, h),
+    resize: (w, h) => inst.resize(w, h),
+    step: (dt) => inst.step(dt),
+    draw: (gBase, gLight) => inst.draw(gBase, gLight),
+    getCenter: () => inst.getCenter(),
+    _inst: inst,
+  };
+})();
