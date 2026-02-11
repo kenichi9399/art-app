@@ -1,0 +1,91 @@
+// input.js
+// -------------------------------------------------------
+// Touching Light — Quiet Luxury / Input
+// 役割：
+// - タップ / ドラッグ / 長押し を統一して扱う
+// - 触れ方を “場の記憶(field)” に書き込み、作品の流れを変える
+// - タップで光（bloom）と粒子補充（体感UP）
+// - 長押しは sketch.js 側の判定（HOLD_MS）で “澄み” モードへ
+// -------------------------------------------------------
+
+let isDown = false;
+let downTime = 0;
+let lastPt = { x: 0, y: 0 };
+
+function pointerDown(x, y) {
+  isDown = true;
+  downTime = nowMs();
+  lastPt.x = x; lastPt.y = y;
+
+  // 触れた瞬間：光のにじみ（呼吸の入口）
+  spawnBloom(x, y, 1.0);
+
+  // 触れた地点に粒子を補充（“反応が薄い”問題を回避）
+  spawnParticlesAround(x, y, Math.floor(CFG.TAP_SPAWN_ADD * perfScale));
+
+  // 触れ始めに“場”へ軽く刻む（止まって見える事故を避ける）
+  addToField(x, y, 0, -1, CFG.MEM_FORCE * 0.25);
+}
+
+function pointerMove(x, y) {
+  if (!isDown) return;
+
+  const dx = x - lastPt.x;
+  const dy = y - lastPt.y;
+
+  // 微小な手ぶれで過剰に書き込まない
+  if (dx * dx + dy * dy < 8) return;
+
+  // 方向を正規化して場へ書く
+  const n = safeNorm(dx, dy);
+  if (n.m > 0) addToField(x, y, n.x, n.y, CFG.MEM_FORCE);
+
+  // たまに光のにじみ（擦れの代わり）
+  if (random() < 0.32) spawnBloom(x, y, 0.35);
+
+  // 粒子を少し“寄せる”ために局所補充（やりすぎない）
+  if (random() < 0.08) spawnParticlesAround(x, y, Math.floor(18 * perfScale));
+
+  lastPt.x = x; lastPt.y = y;
+}
+
+function pointerUp() {
+  isDown = false;
+}
+
+// -------------- p5 hooks --------------
+// iOS Safariでタッチがスクロール扱いにならないよう return false を返す
+
+function touchStarted() {
+  const x = (touches && touches[0]) ? touches[0].x : mouseX;
+  const y = (touches && touches[0]) ? touches[0].y : mouseY;
+  pointerDown(x, y);
+  return false;
+}
+
+function touchMoved() {
+  const x = (touches && touches[0]) ? touches[0].x : mouseX;
+  const y = (touches && touches[0]) ? touches[0].y : mouseY;
+  pointerMove(x, y);
+  return false;
+}
+
+function touchEnded() {
+  pointerUp();
+  return false;
+}
+
+// デスクトップでも操作できるようにしておく
+function mousePressed() { pointerDown(mouseX, mouseY); }
+function mouseDragged() { pointerMove(mouseX, mouseY); }
+function mouseReleased() { pointerUp(); }
+
+// -------------- optional keyboard --------------
+// R: リセット（作品の“場”を拭う）
+function keyPressed() {
+  if (key === 'r' || key === 'R') {
+    clearField();
+    // 光とインクの蓄積もリセットしたければここで処理する（現状は場だけ）
+    if (window.__TL__) window.__TL__.hud('<strong class="ok">Reset</strong><div class="muted">field cleared</div>', 900);
+  }
+}

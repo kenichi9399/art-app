@@ -1,0 +1,103 @@
+// sketch.js
+// -------------------------------------------------------
+// Touching Light — Quiet Luxury / Entry Point
+// ここだけ見れば全体が追えるようにする：
+// - 初期化（seed/レイヤ/場/抜け影/粒子/紙）
+// - ループ（呼吸→場減衰→抜け影更新→粒子更新→合成）
+// - リサイズ対応
+// - 長押し(praying)の意味づけ
+// -------------------------------------------------------
+
+let seed = 1;
+let wasPraying = false;
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(CFG.PD);
+  frameRate(CFG.FPS);
+
+  // iOSのスクロール/ズーム誤爆を抑える（index.htmlにも保険はある）
+  const c = document.querySelector("canvas");
+  if (c) c.style.touchAction = "none";
+
+  // seed固定（端末差のブレを減らしつつ、作品個体差を出す）
+  seed = makeSeed(width, height);
+  seededInit(seed);
+
+  // レイヤ初期化
+  initLayers(width, height);
+
+  // 場（ドラッグ記憶）
+  initField(width, height);
+
+  // 抜け・影
+  initVoidShadow(width, height);
+
+  // 粒子
+  initParticles(width, height);
+
+  // 紙（最初は強めに作って“黒事故”を避ける）
+  paintPaper(width, height, true);
+
+  // 起動時の一息（初回から真っ黒に見えないよう）
+  spawnBloom(hole.x, hole.y, 0.7);
+
+  // index.html側へ「起動した」通知（ローディング消す）
+  tlHook('onSketchStarted');
+}
+
+function draw() {
+  // 作品の呼吸（0..1）
+  const breathe = breath01();
+
+  // 長押し：澄み（祈り）モード
+  // input.js が isDown/downTime を管理している
+  const praying = isDown && (nowMs() - downTime > CFG.HOLD_MS);
+
+  // 場の減衰：祈り中は残りやすく（澄みが定着する感じ）
+  decayField(praying ? CFG.MEM_DECAY_PRAY : CFG.MEM_DECAY);
+
+  // 抜け・影の更新
+  updateVoidShadow(width, height, breathe, praying);
+
+  // 粒子更新 → 描画する数を返す（perfScale反映）
+  const pCount = stepParticles(width, height, hole, breathe, praying);
+
+  // 1フレーム合成
+  renderFrame(width, height, breathe, praying, pCount);
+
+  // 祈り→解除の瞬間に、中心が少しだけ光る（体感の節目）
+  if (wasPraying && !praying) {
+    spawnBloom(hole.x, hole.y, 0.45);
+  }
+  wasPraying = praying;
+
+  // 起動直後、見えているかの簡易確認（必要なら）
+  // if (frameCount === 2) tlHook('hud', '<strong class="ok">Running</strong>', 700);
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+
+  // レイヤ再作成（p5のGraphicsはサイズ固定なので作り直す）
+  initLayers(width, height);
+
+  // 場の再初期化（サイズ変化でセルがズレるため）
+  initField(width, height);
+
+  // 抜け・影も再配置
+  initVoidShadow(width, height);
+
+  // 紙を作り直し
+  paintPaper(width, height, true);
+
+  // リサイズ後の一息
+  spawnBloom(hole.x, hole.y, 0.55);
+}
+
+// 任意：ダブルタップズームなどで止まったように見えるのを回避
+function deviceShaken() {
+  // iOSでは働かないこともあるが、保険として置いておく
+  spawnBloom(hole.x, hole.y, 0.8);
+  clearField();
+}

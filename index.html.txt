@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <meta name="color-scheme" content="dark" />
+  <title>Touching Light — Quiet Luxury</title>
+
+  <style>
+    :root{
+      --bg: #05070d;
+      --fg: rgba(240,245,255,.85);
+      --muted: rgba(240,245,255,.55);
+      --card: rgba(255,255,255,.06);
+      --border: rgba(255,255,255,.14);
+      --shadow: rgba(0,0,0,.55);
+      --ok: rgba(140, 255, 200, .85);
+      --warn: rgba(255, 210, 140, .85);
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--bg);
+      overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+    }
+    canvas { display:block; width:100vw; height:100vh; touch-action:none; }
+
+    #loading{
+      position:fixed; inset:0;
+      display:grid; place-items:center;
+      color:var(--muted);
+      background: radial-gradient(1200px 800px at 30% 20%, rgba(255,255,255,.06), transparent 60%),
+                  radial-gradient(900px 700px at 70% 75%, rgba(160,120,255,.05), transparent 58%),
+                  var(--bg);
+      transition: opacity .25s ease;
+      pointer-events:none;
+      z-index: 9;
+    }
+    #loading.hide{ opacity:0; }
+
+    .spinner{
+      width:22px; height:22px; border-radius:999px;
+      border:2px solid rgba(255,255,255,.18);
+      border-top-color: rgba(255,255,255,.65);
+      animation: spin .9s linear infinite;
+      margin:0 auto 10px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #hud{
+      position:fixed; left:12px; top:12px; z-index:10;
+      max-width: min(520px, calc(100vw - 24px));
+      padding:10px 12px; border-radius:12px;
+      background: linear-gradient(180deg, var(--card), transparent);
+      border:1px solid var(--border);
+      box-shadow:0 16px 40px var(--shadow);
+      color:var(--fg);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      font-size:12px; line-height:1.45;
+      pointer-events:none;
+      opacity:0; transform: translateY(-6px);
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    #hud.show{ opacity:1; transform: translateY(0); }
+    #hud .muted{ color: var(--muted); }
+    #hud .ok{ color: var(--ok); }
+    #hud .warn{ color: var(--warn); }
+  </style>
+</head>
+
+<body>
+  <div id="loading" aria-hidden="true">
+    <div>
+      <div class="spinner"></div>
+      <div style="font-size:12px;letter-spacing:.05em;">loading</div>
+    </div>
+  </div>
+  <div id="hud" aria-hidden="true"></div>
+
+  <!-- p5.js -->
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+
+  <script>
+    const hud = document.getElementById('hud');
+    const loading = document.getElementById('loading');
+
+    function showHud(html){ hud.innerHTML = html; hud.classList.add('show'); }
+    function hideHud(){ hud.classList.remove('show'); hud.innerHTML = ''; }
+    function escapeHtml(s){
+      return s.replace(/[&<>"']/g, (c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    window.addEventListener('error', (e)=>{
+      showHud(`<strong class="warn">JavaScript error</strong>
+               <div class="muted">${escapeHtml(String(e.message || e.error || 'unknown'))}</div>
+               <div class="muted">ファイル名/読み込み順を確認してください</div>`);
+      loading.classList.add('hide');
+    });
+    window.addEventListener('unhandledrejection', (e)=>{
+      showHud(`<strong class="warn">Promise rejection</strong>
+               <div class="muted">${escapeHtml(String(e.reason || 'unknown'))}</div>`);
+      loading.classList.add('hide');
+    });
+
+    if (typeof window.p5 === 'undefined'){
+      showHud(`<strong class="warn">p5.js not loaded</strong>
+               <div class="muted">通信制限/広告ブロックでCDNが落ちている可能性</div>`);
+    } else {
+      showHud(`<strong class="ok">Ready</strong><div class="muted">touch / drag / hold</div>`);
+      setTimeout(()=>hideHud(), 1200);
+    }
+
+    window.__TL__ = {
+      onSketchStarted(){
+        loading.classList.add('hide');
+        setTimeout(()=>{ loading.style.display='none'; }, 300);
+      }
+    };
+  </script>
+
+  <!-- 分割JS（依存順が肝） -->
+  <script src="./cfg.js"></script>
+  <script src="./utils.js"></script>
+  <script src="./field.js"></script>
+  <script src="./particles.js"></script>
+  <script src="./void_shadow.js"></script>
+  <script src="./render.js"></script>
+  <script src="./input.js"></script>
+  <script src="./sketch.js"></script>
+
+  <noscript>
+    <div style="position:fixed;inset:0;display:grid;place-items:center;color:#eee;background:#05070d;">
+      JavaScript が無効です。作品は JavaScript を必要とします。
+    </div>
+  </noscript>
+</body>
+</html>

@@ -1,0 +1,196 @@
+// void_shadow.js
+// -------------------------------------------------------
+// Touching Light — Quiet Luxury / Void & Shadow
+// 役割：
+// - VOID（空の抜け＝余白の光学）… “上へ広がる”
+// - SHADOW（人ではない何かの長い影）… “地上の重み”
+// - 互いに侵食し合う：抜けが影を削り、影が抜けの輪郭を際立てる
+// -------------------------------------------------------
+
+let hole = { x: 0, y: 0, r: 0 };             // VOID中心と半径
+let shadowRoot = { x: 0, y: 0, ang: -0.35 }; // 影の根（起点）と向き
+
+/**
+ * initVoidShadow
+ * 画面サイズに基づき初期配置
+ */
+function initVoidShadow(w, h) {
+  // 端末幅に応じて半径を調整（大きすぎ/小さすぎの破綻防止）
+  const base = CFG.VOID_R;
+  const scaled = base * (Math.min(w, h) / 780); // 780px基準（だいたいスマホ縦）
+  hole.r = clamp(scaled, CFG.VOID_R_MIN, CFG.VOID_R_MAX);
+
+  // “空”は少し左上寄り（上へ広がる余白が出る）
+  hole.x = w * 0.36;
+  hole.y = h * 0.30;
+
+  // 影の根は右下寄り（地上の重み）
+  shadowRoot.x = w * 0.62;
+  shadowRoot.y = h * 0.78;
+  shadowRoot.ang = -0.35;
+}
+
+/**
+ * updateVoidShadow
+ * 時間変化（息/揺らぎ）と、影の向きの更新
+ */
+function updateVoidShadow(w, h, breathe, praying) {
+  const tt = frameCount * 0.0038;
+
+  // VOIDは“わずかに”揺らす。揺らしすぎるとチープになるので小さめ。
+  hole.x = w * 0.36 + (noise(tt, 1.3) - 0.5) * 28;
+  hole.y = h * 0.30 + (noise(tt, 7.9) - 0.5) * 24;
+
+  // 影方向：VOIDに引かれるが、少し迷う（非人間的なズレ）
+  const target = atan2(hole.y - shadowRoot.y, hole.x - shadowRoot.x);
+  const sway = (noise(tt, 4.2) - 0.5) * 0.25;
+  const pull = praying ? 0.022 : 0.013;
+
+  shadowRoot.ang = angleLerp(shadowRoot.ang, target + sway, pull);
+}
+
+/**
+ * drawVoid
+ * 光レイヤーに “抜け” を描く
+ */
+function drawVoid(g, w, h, breathe, praying) {
+  g.push();
+  g.blendMode(SCREEN);
+  g.noStroke();
+
+  const baseR = hole.r * (praying ? 1.10 : 1.0) * (0.96 + breathe * CFG.VOID_BREATHE);
+
+  for (let i = CFG.VOID_LAYERS; i >= 1; i--) {
+    const u = i / CFG.VOID_LAYERS; // 1..0
+    const rr = baseR * u;
+
+    // “層が少し歪む”ことで絵画的な揺らぎ
+    const warp = (1 - u) * CFG.VOID_WARP * (1.1 + breathe);
+    const wx = (noise(u * 3.0, frameCount * 0.01) - 0.5) * baseR * warp;
+    const wy = (noise(u * 3.0 + 9.7, frameCount * 0.01) - 0.5) * baseR * warp;
+
+    // 紫は遠層の気配として薄く（あくまで“少し”）
+    const purple = 255 * CFG.HINT_PURPLE * (1 - u) * (praying ? 1.2 : 1.0);
+    const a = (1 - u) * (praying ? 96 : 72);
+
+    g.fill(210 + purple * 0.10, 235, 255 - purple * 0.45, a);
+    g.ellipse(hole.x + wx, hole.y + wy, rr * 2.20, rr * 2.20 * 1.06);
+  }
+
+  // 長押し（祈り）中：縁に澄む粒（場が静まる）
+  if (praying) {
+    g.fill(235, 250, 255, 18);
+    for (let j = 0; j < 10; j++) {
+      const ang = random(TAU);
+      const rr = baseR * (0.86 + random() * 0.20);
+      g.ellipse(hole.x + cos(ang) * rr, hole.y + sin(ang) * rr, 18, 18);
+    }
+  }
+
+  g.pop();
+}
+
+/**
+ * drawShadow
+ * 影レイヤーに “長い影” を描く
+ */
+function drawShadow(g, w, h, breathe, praying) {
+  g.push();
+  g.blendMode(BLEND);
+
+  const len = h * CFG.SH_LEN * (0.95 + breathe * 0.08);
+  const alpha = (praying ? CFG.SH_ALPHA * 0.78 : CFG.SH_ALPHA) * (0.85 + breathe * 0.25);
+
+  // 根の微揺れ（生々しくならない程度）
+  const t = frameCount * 0.003;
+  const rx = shadowRoot.x + (noise(t, 9.1) - 0.5) * 10;
+  const ry = shadowRoot.y + (noise(t, 3.7) - 0.5) * 8;
+
+  g.translate(rx, ry);
+  g.rotate(shadowRoot.ang);
+  g.noStroke();
+
+  // ---- 主帯（断続する帯）----
+  for (let i = 0; i < len; i += 10) {
+    const k = i / len;
+
+    // 幅のうねり（筆の“かすれ”を作る）
+    let w0 = lerp(CFG.SH_W0, CFG.SH_W1, k);
+    w0 *= (0.92 + noise(k * 2.2, t) * 0.18);
+    w0 += (noise(k * 7.2, t * 1.7) - 0.5) * 120;
+
+    // 欠け（単調さ回避）
+    if (noise(k * 6.0, t * 1.1) < CFG.SH_GAPS) continue;
+
+    // ワールド位置で“抜けへの侵食”を評価（近いほど影が削がれる）
+    const wx = rx + (-sin(shadowRoot.ang)) * i;
+    const wy = ry + ( cos(shadowRoot.ang)) * i;
+    const er = Math.max(0, 1 - dist(wx, wy, hole.x, hole.y) / (hole.r * 1.22));
+    const erode = Math.pow(er, 1.35) * CFG.SH_ERODE * (praying ? 1.05 : 1.0);
+
+    const ww = w0 * (1 - erode * 0.86);
+    let a = alpha * (1 - k) * (1 - erode * 0.78);
+
+    // 端の“濃すぎ”を少し抑える
+    a *= clamp((0.65 + 0.35 * noise(k * 2.1, t * 0.7)), 0.55, 1.0);
+
+    if (ww <= 7 || a <= 1) continue;
+
+    // 不完全な輪郭（かすれ）
+    const sx = (noise(k * 3.1, t * 1.4) - 0.5) * 26;
+    const jag = (noise(k * 9.2, t * 1.9) - 0.5) * 26;
+
+    g.fill(0, 0, 0, a);
+    g.rect(-ww / 2 + sx, i, ww + jag, 10);
+
+    // 侵食域に“遠層の紫”を混ぜる（黒がただの黒にならない）
+    if (er > 0.20 && random() < 0.18) {
+      g.fill(40, 20, 70, a * 0.22);
+      g.ellipse(sx * 0.5, i, ww * 0.34, 14);
+    }
+  }
+
+  // ---- 枝（人ではない“何か”）----
+  g.noFill();
+  g.strokeWeight(2);
+
+  for (let b = 0; b < CFG.SH_BRANCHES; b++) {
+    const kk = b / CFG.SH_BRANCHES;
+    const yy = len * (0.18 + kk * 0.72);
+
+    const baseX = (noise(b * 2.7, t * 1.1) - 0.5) * 210;
+    const ex = baseX + (noise(b * 7.1, t * 1.5) - 0.5) * 240;
+    const ey = yy + (noise(b * 4.3, t * 1.2) - 0.5) * 70;
+
+    // 抜けに近い枝は消える（意味の一貫）
+    const wx = shadowRoot.x + baseX;
+    const wy = shadowRoot.y + yy;
+    const er = Math.max(0, 1 - dist(wx, wy, hole.x, hole.y) / (hole.r * 1.12));
+    if (er > 0.56) continue;
+
+    let a = alpha * (0.42 - kk * 0.26) * (1 - er * 0.62);
+    if (a <= 1) continue;
+
+    g.stroke(0, 0, 0, a);
+
+    // 断続線（完全な輪郭にしない）
+    for (let s = 0; s < 4; s++) {
+      const t0 = s / 4;
+      const t1 = t0 + 0.22;
+      if (noise(b * 3.3, s * 0.9, t * 2.0) < 0.26) continue;
+
+      g.line(
+        lerp(baseX, ex, t0), lerp(yy, ey, t0),
+        lerp(baseX, ex, Math.min(1, t1)), lerp(yy, ey, Math.min(1, t1))
+      );
+    }
+
+    // 逆光の薄い白（矛盾）— ごく小さく
+    if (random() < 0.08) {
+      g.stroke(230, 245, 255, a * 0.16);
+      g.line(baseX + 1, yy + 1, ex + 1, ey + 1);
+    }
+  }
+
+  g.pop();
+}

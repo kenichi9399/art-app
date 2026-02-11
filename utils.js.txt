@@ -1,0 +1,154 @@
+// utils.js
+// -------------------------------------------------------
+// Touching Light — Quiet Luxury / Utilities
+// 目的：
+// - “意味”のある補助関数をまとめ、作品ロジックから分離する
+// - 端末差/乱数/角度/呼吸(時間) を安定させる
+// -------------------------------------------------------
+
+/**
+ * clamp: 範囲に収める
+ */
+function clamp(v, a, b) {
+  return Math.max(a, Math.min(b, v));
+}
+
+/**
+ * saturate: 0..1に収める
+ */
+function saturate(v) {
+  return clamp(v, 0, 1);
+}
+
+/**
+ * lerp01: 0..1のtで補間
+ */
+function lerp01(a, b, t) {
+  return a + (b - a) * t;
+}
+
+/**
+ * smoothstep: 0..1の滑らかな補間（端が滑る）
+ */
+function smoothstep(edge0, edge1, x) {
+  const t = saturate((x - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * remap: 範囲変換
+ */
+function remap(x, in0, in1, out0, out1) {
+  const t = (x - in0) / (in1 - in0);
+  return out0 + (out1 - out0) * t;
+}
+
+/**
+ * angleLerp: 角度を最短経路で補間（-PI..PIのラップを考慮）
+ */
+function angleLerp(a, b, t) {
+  let d = ((b - a + Math.PI) % (TAU)) - Math.PI;
+  return a + d * t;
+}
+
+/**
+ * dist2: 2D距離の二乗（sqrtを避けたい時）
+ */
+function dist2(x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  return dx * dx + dy * dy;
+}
+
+/**
+ * safeNorm: ベクトル正規化（ゼロ割回避）
+ */
+function safeNorm(x, y, eps = 1e-6) {
+  const m = Math.sqrt(x * x + y * y);
+  if (m < eps) return { x: 0, y: 0, m: 0 };
+  return { x: x / m, y: y / m, m };
+}
+
+/**
+ * edgeFade01:
+ * 画面の端に近いほど暗くする係数（白飽和対策の基本部品）
+ * - 1 = 中央
+ * - EDGE_FADE_MIN 近辺 = 端
+ */
+function edgeFade01(x, y, w, h) {
+  const edge = Math.min(x, w - x, y, h - y);
+  const t = saturate(edge / CFG.EDGE_FADE_PX);
+  // 端で急に落ちると“人工的”になるので smoothstep を使う
+  const s = smoothstep(0, 1, t);
+  return lerp01(CFG.EDGE_FADE_MIN, 1, s);
+}
+
+/**
+ * exposureCap:
+ * alpha（発光強度）が高すぎて白飽和しそうなとき抑える
+ * 単純clampより“柔らかく抑える”ためのカーブ
+ */
+function exposureCap(a, cap = CFG.LIGHT_ALPHA_CAP) {
+  if (a <= cap) return a;
+  // 超過分を圧縮する（ソフトクリップ）
+  const over = a - cap;
+  return cap + over * 0.25; // ここを0.2〜0.35で調整可能
+}
+
+/**
+ * breath01:
+ * 0..1 の呼吸。CFG.BREATH_PERIOD_MS 周期でゆっくり変化
+ * 作品の「息」を統一する基礎リズム。
+ */
+function breath01() {
+  const ms = CFG.BREATH_PERIOD_MS;
+  const t = (millis() % ms) / ms;
+  return 0.5 - 0.5 * Math.cos(TAU * t);
+}
+
+/**
+ * seededInit:
+ * 乱数・ノイズを安定化（環境差を減らす）
+ * 同じseedなら見た目が再現される
+ */
+function seededInit(seed) {
+  randomSeed(seed);
+  noiseSeed(seed);
+}
+
+/**
+ * makeSeed:
+ * 端末・画面サイズ・時刻を混ぜたseedを作る
+ */
+function makeSeed(w, h) {
+  // Date.nowの変化を入れつつ、画面サイズも混ぜて“作品ごとの個体差”を出す
+  return (Date.now() ^ (w << 1) ^ (h << 2)) >>> 0;
+}
+
+/**
+ * nowMs:
+ * 単にmillis()を使うが、抽象化しておく（将来差し替えやすい）
+ */
+function nowMs() {
+  return millis();
+}
+
+/**
+ * isTouchDevice:
+ * タッチデバイス推定（過信しない）
+ */
+function isTouchDevice() {
+  return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+}
+
+/**
+ * tlHook:
+ * index.html 側の __TL__ hook があれば呼び出す（なくても安全）
+ */
+function tlHook(name, ...args) {
+  try {
+    if (window.__TL__ && typeof window.__TL__[name] === 'function') {
+      window.__TL__[name](...args);
+    }
+  } catch (_) {}
+}
