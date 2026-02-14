@@ -1,107 +1,98 @@
 // input.js
-(() => {
-  "use strict";
+// iOS Safariで「ボタンが押せない/Resetが効かない」系を避けるため、
+// pointer-events / touch-action と合わせて、イベントの取り回しを明示
 
-  function createApp() {
-    const canvas = document.getElementById("c");
-    if (!canvas) throw new Error("canvas #c not found (index.htmlが壊れている可能性)");
+(function(){
+  const { clamp } = window.U;
 
-    const ctx = U.getCtx2D(canvas);
-    if (!ctx) throw new Error("2D context not available (Safariの設定/メモリ/読み込み順を確認)");
+  function Input(canvas){
+    this.canvas = canvas;
 
-    const app = new Sketch(canvas, ctx);
+    this.down = false;
+    this.press = 0;          // 0..1（長押し）
+    this._pressT = 0;
 
-    // Buttons
-    const btnSave = document.getElementById("btnSave");
-    const btnReset = document.getElementById("btnReset");
+    this.x = 0; this.y = 0;
+    this.vx = 0; this.vy = 0;
+    this._px = 0; this._py = 0;
 
-    btnSave?.addEventListener("click", () => {
-      U.downloadPNG(canvas, "touching-light.png", CFG.saveScale);
-      U.toast("Saved");
-    });
+    this.onSave = null;
+    this.onReset = null;
 
-    btnReset?.addEventListener("click", () => {
-      app.reset();
-      U.toast("Reset");
-    });
+    this._bind();
+  }
 
-    // Resize
-    window.addEventListener("resize", () => app.reset(), { passive: true });
-    window.addEventListener("orientationchange", () => setTimeout(() => app.reset(), 60), { passive: true });
-
-    // Pointer events
-    const getPos = (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const p = (e.touches && e.touches[0]) ? e.touches[0] : e;
-      return {
-        x: (p.clientX - rect.left),
-        y: (p.clientY - rect.top)
-      };
-    };
+  Input.prototype._bind = function(){
+    const c = this.canvas;
 
     const onDown = (e) => {
-      e.preventDefault();
-      const p = getPos(e);
-      app.pointer.down = true;
-      app.pointer.x = p.x;
-      app.pointer.y = p.y;
-      app.pointer.lastX = p.x;
-      app.pointer.lastY = p.y;
-      app.pointer.downAt = U.now();
-      app.pointer.longFired = false;
+      this.down = true;
+      const p = this._pos(e);
+      this._px = this.x = p.x;
+      this._py = this.y = p.y;
+      this.vx = this.vy = 0;
+      this._pressT = 0;
+      // 重要：Safariでスクロール/ズーム干渉を止める
+      e.preventDefault?.();
     };
 
     const onMove = (e) => {
-      if (!app.pointer.down) return;
-      e.preventDefault();
-      const p = getPos(e);
-      app.pointer.x = p.x;
-      app.pointer.y = p.y;
+      if(!this.down) return;
+      const p = this._pos(e);
+      this.vx = p.x - this._px;
+      this.vy = p.y - this._py;
+      this._px = this.x = p.x;
+      this._py = this.y = p.y;
+      e.preventDefault?.();
     };
 
     const onUp = (e) => {
-      e.preventDefault();
-      app.pointer.down = false;
+      this.down = false;
+      this.press = 0;
+      this._pressT = 0;
+      this.vx = this.vy = 0;
+      e.preventDefault?.();
     };
 
-    canvas.addEventListener("pointerdown", onDown);
-    canvas.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    // pointer events（iOSもだいたいOK）
+    c.addEventListener("pointerdown", onDown, { passive:false });
+    c.addEventListener("pointermove", onMove, { passive:false });
+    window.addEventListener("pointerup", onUp, { passive:false });
+    window.addEventListener("pointercancel", onUp, { passive:false });
 
-    // iOS Safari sometimes prefers touch listeners too
-    canvas.addEventListener("touchstart", onDown, { passive: false });
-    canvas.addEventListener("touchmove", onMove, { passive: false });
-    window.addEventListener("touchend", onUp, { passive: false });
+    // ボタン
+    const btnSave = document.getElementById("btnSave");
+    const btnReset = document.getElementById("btnReset");
 
-    // RAF loop
-    function loop() {
-      try {
-        app.step();
-        requestAnimationFrame(loop);
-      } catch (err) {
-        U.showError(err);
-        // stop the loop to avoid spamming
-      }
+    // iOSで “クリックがcanvasに吸われる” 時があるので stopPropagation も入れる
+    const stop = (e)=>{ e.preventDefault?.(); e.stopPropagation?.(); };
+
+    btnSave?.addEventListener("click", (e)=>{ stop(e); this.onSave?.(); }, { passive:false });
+    btnSave?.addEventListener("touchend", (e)=>{ stop(e); this.onSave?.(); }, { passive:false });
+
+    btnReset?.addEventListener("click", (e)=>{ stop(e); this.onReset?.(); }, { passive:false });
+    btnReset?.addEventListener("touchend", (e)=>{ stop(e); this.onReset?.(); }, { passive:false });
+  };
+
+  Input.prototype._pos = function(e){
+    const r = this.canvas.getBoundingClientRect();
+    const p = (e.touches && e.touches[0]) ? e.touches[0] : e;
+    return {
+      x: (p.clientX - r.left) * (this.canvas.width / r.width),
+      y: (p.clientY - r.top)  * (this.canvas.height / r.height)
+    };
+  };
+
+  Input.prototype.update = function(dt){
+    // 長押し判定（0..1）
+    if(this.down){
+      this._pressT += dt;
+      this.press = clamp(this._pressT / 0.42, 0, 1); // 0.42sで最大
+    }else{
+      this.press = 0;
+      this._pressT = 0;
     }
-    requestAnimationFrame(loop);
+  };
 
-    return app;
-  }
-
-  // global error trap (shows nice panel)
-  window.addEventListener("error", (e) => {
-    try { U.showError(e.error || e.message || e); } catch {}
-  });
-
-  window.addEventListener("unhandledrejection", (e) => {
-    try { U.showError(e.reason || e); } catch {}
-  });
-
-  window.addEventListener("DOMContentLoaded", () => {
-    try {
-      createApp();
-    } catch (err) {
-      U.showError(err);
-    }
-  });
+  window.Input = Input;
 })();
