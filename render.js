@@ -1,87 +1,65 @@
 // render.js
-(() => {
-  "use strict";
 
-  function clear(ctx, w, h) {
-    const dpr = U.getDPR();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, w * dpr, h * dpr);
-    ctx.fillStyle = window.CFG.BG;
-    ctx.fillRect(0, 0, w * dpr, h * dpr);
+(function(){
+  const { clamp, lerp } = window.U;
+
+  function Renderer(ctx){
+    this.ctx = ctx;
+    this.w = 0;
+    this.h = 0;
   }
 
-  function drawGrain(ctx, w, h, strength = 0.06) {
-    const dpr = U.getDPR();
-    const cw = Math.floor(w * dpr), ch = Math.floor(h * dpr);
-    const img = ctx.getImageData(0, 0, cw, ch);
-    const d = img.data;
-    const n = d.length;
-    for (let i = 0; i < n; i += 4) {
-      const g = (Math.random() - 0.5) * 255 * strength;
-      d[i] = U.clamp(d[i] + g, 0, 255);
-      d[i + 1] = U.clamp(d[i + 1] + g, 0, 255);
-      d[i + 2] = U.clamp(d[i + 2] + g, 0, 255);
-    }
-    ctx.putImageData(img, 0, 0);
+  Renderer.prototype.resize = function(w, h){
+    this.w = w; this.h = h;
+  };
+
+  Renderer.prototype.clear = function(){
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = `rgba(5,7,13,${CFG.RENDER.CLEAR_ALPHA})`;
+    ctx.fillRect(0,0,this.w,this.h);
+    ctx.restore();
+  };
+
+  function dot(ctx, x, y, r, a, soft){
+    // “点”を柔らかく：radial gradient
+    const rr = Math.max(0.6, r);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, rr * (1.8 + soft*1.6));
+    g.addColorStop(0.0, `rgba(245,248,255,${a})`);
+    g.addColorStop(0.35, `rgba(245,248,255,${a*0.55})`);
+    g.addColorStop(1.0, `rgba(245,248,255,0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, rr * (1.8 + soft*1.6), 0, Math.PI*2);
+    ctx.fill();
   }
 
-  function drawParticles(ctx, w, h, P) {
-    const dpr = U.getDPR();
-    const cw = w * dpr, ch = h * dpr;
+  Renderer.prototype.draw = function(particles){
+    const ctx = this.ctx;
 
     ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    ctx.lineCap = "round";
+    ctx.globalCompositeOperation = CFG.RENDER.ADDITIVE ? "lighter" : "source-over";
 
-    // subtle trails
-    ctx.fillStyle = "rgba(5,7,13,0.06)";
-    ctx.fillRect(0, 0, cw, ch);
+    const baseA = CFG.RENDER.DOT_ALPHA;
+    const soft = CFG.RENDER.DOT_SOFT;
 
-    for (let i = 0; i < P.n; i++) {
-      const x = P.x[i] * dpr;
-      const y = P.y[i] * dpr;
+    for(let i=0;i<particles.p.length;i++){
+      const o = particles.p[i];
 
-      const a = P.a[i];
-      const s = P.s[i] * dpr;
+      // サイズが大きい粒ほど少し明るい（核）
+      const a = clamp(baseA * (0.35 + o.a*0.65) * (0.85 + o.r*0.06), 0, 0.95);
 
-      // cool-white with slight hue drift
-      const tint = P.h[i];
-      const r = 220 + tint * 15;
-      const g = 230 + tint * 18;
-      const b = 245 + tint * 10;
+      dot(ctx, o.x, o.y, o.r, a, soft);
 
-      ctx.beginPath();
-      ctx.fillStyle = U.rgba(r, g, b, a * 0.55);
-      ctx.arc(x, y, s * 0.55, 0, Math.PI * 2);
-      ctx.fill();
-
-      // micro halo
-      ctx.beginPath();
-      ctx.fillStyle = U.rgba(r, g, b, a * 0.18);
-      ctx.arc(x, y, s * 1.9, 0, Math.PI * 2);
-      ctx.fill();
+      // 微細粒の“きらめき”を少しだけ（負荷が軽い）
+      if(o.r < 1.0 && (i % 13 === 0)){
+        dot(ctx, o.x + (Math.random()*2-1)*1.2, o.y + (Math.random()*2-1)*1.2, 0.65, a*0.35, 0.9);
+      }
     }
 
     ctx.restore();
-  }
+  };
 
-  function drawVeil(ctx, w, h, t) {
-    const dpr = U.getDPR();
-    const cw = w * dpr, ch = h * dpr;
-
-    ctx.save();
-    ctx.globalCompositeOperation = "screen";
-    const ox = (Math.sin(t * 0.00025) * 0.5 + 0.5) * cw;
-    const oy = (Math.cos(t * 0.00018) * 0.5 + 0.5) * ch;
-
-    const rg = ctx.createRadialGradient(ox, oy, 0, ox, oy, Math.min(cw, ch) * 0.85);
-    rg.addColorStop(0.0, "rgba(230,240,255,0.10)");
-    rg.addColorStop(0.45, "rgba(230,240,255,0.05)");
-    rg.addColorStop(1.0, "rgba(0,0,0,0)");
-    ctx.fillStyle = rg;
-    ctx.fillRect(0, 0, cw, ch);
-    ctx.restore();
-  }
-
-  window.Render = { clear, drawParticles, drawVeil, drawGrain };
+  window.Renderer = Renderer;
 })();
