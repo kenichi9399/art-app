@@ -3,20 +3,20 @@ const CFG = (() => {
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   return {
-    UI: {
-      showSave: false,           // iPhone Safariは保存が不安定なのでデフォルト非表示
-    },
-
     RENDER: {
-      // iPhoneでカクつく原因はDPR過剰が多いので上限をかける
-      dprMax: isMobile ? 1.75 : 2.25,
-      // さらに軽量化したいなら 0.85〜0.95
+      dprMax: isMobile ? 1.6 : 2.0,
       internalScale: isMobile ? 0.92 : 1.0,
       background: "#05070d",
-      blend: "lighter",
-      softAlpha: 0.09,          // 残像（深み）
-      vignette: 0.75,
-      grain: 0.18,
+
+      // 白飛びしにくい合成
+      blend: "screen",          // ← lighter をやめる
+      exposure: 0.82,           // ← 全体の露出（0.7〜0.95で調整）
+
+      // 残像（深み）… 低すぎると光が溜まって白飛びする
+      softAlpha: 0.14,          // ← 0.09→0.14（蓄積抑制）
+
+      vignette: 0.78,
+      grain: 0.16,
     },
 
     FIELD: {
@@ -30,42 +30,36 @@ const CFG = (() => {
     },
 
     P: {
-      // 粒子数：端末で自動調整
       countMobile: 1400,
       countDesktop: 2400,
 
-      // サイズ分布（混在：中心は硬い粒/周縁は霧）
-      rMin: 0.35,
-      rMax: 2.6,
-      rFogMin: 0.22,
-      rFogMax: 1.3,
+      // ★ サイズを全体に小さく（「大きめしかない」対策）
+      rMin: 0.18,
+      rMax: 1.55,
+      rFogMin: 0.10,
+      rFogMax: 0.80,
 
-      // 速度・粘性
       damp: 0.985,
-      jitter: 0.035,        // 微細な揺らぎ
+      jitter: 0.035,
       maxV: 1.9,
 
-      // 光量
-      glow: 1.0,
-      coreGlow: 1.25,
+      glow: 0.85,
+      coreGlow: 0.95,          // 核も控えめに（白飛びしやすいので）
 
-      // 核（Core）
       coreBaseMass: 1.0,
-      coreAttract: 0.85,     // 常時の“引力”
-      coreOrbit: 0.18,       // 常時の“回転”
-      coreGatherBoost: 3.0,  // 長押し中の引力増幅
-      coreMergeRadius: 0.028,// 合体距離（正規化座標）
-      coreMergeGain: 0.20,   // 合体時の質量移譲
+      coreAttract: 0.85,
+      coreOrbit: 0.18,
+      coreGatherBoost: 3.0,
+      coreMergeRadius: 0.028,
+      coreMergeGain: 0.20,
 
-      // タッチの影響
-      tapImpulse: 1.25,
-      dragImpulse: 0.95,
-      pressGatherSeconds: 0.38, // 長押し判定
+      tapImpulse: 1.10,
+      dragImpulse: 0.85,
+      pressGatherSeconds: 0.38,
     },
 
     PERF: {
       fpsTarget: 60,
-      // 自動軽量化の閾値
       degradeBelowFps: 46,
       improveAboveFps: 57,
       checkIntervalMs: 1200,
