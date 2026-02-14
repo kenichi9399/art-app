@@ -1,40 +1,47 @@
 // field.js
-// フローフィールド：fbm + curl 的な回転を生成
 
-(function(){
-  const { fbm2 } = window.U;
+const Field = (() => {
+  let t = 0;
 
-  function fieldAngle(x, y, t){
-    const s = CFG.FIELD.SCALE;
-    const d = CFG.FIELD.DRIFT;
+  const sample = (x, y, dt, core) => {
+    // x,y in [0..1]
+    t += dt;
 
-    // fbm を2系統で作り、角度にする
-    const n1 = fbm2(x*s + t*d, y*s - t*d, CFG.FIELD.FBM_OCT, CFG.FIELD.FBM_LAC, CFG.FIELD.FBM_GAIN);
-    const n2 = fbm2(x*s - t*d, y*s + t*d, CFG.FIELD.FBM_OCT, CFG.FIELD.FBM_LAC, CFG.FIELD.FBM_GAIN);
+    const sc = CFG.FIELD.scale;
+    const ox = x * 2 - 1;
+    const oy = y * 2 - 1;
 
-    // 角度（-pi..pi）
-    return (n1 * 2.2 + n2 * 1.3) * Math.PI;
-  }
+    // drift by time
+    const tx = ox + t * CFG.FIELD.drift;
+    const ty = oy - t * CFG.FIELD.drift * 0.6;
 
-  // curl っぽく：角度からベクトルを作り、周囲差分で回転強化
-  function sample(x, y, t){
-    const a = fieldAngle(x, y, t);
-    let vx = Math.cos(a);
-    let vy = Math.sin(a);
+    // curl from fbm
+    const eps = 0.0025;
+    const c = U.curl2(tx * sc, ty * sc, eps, CFG.FIELD.layers, CFG.FIELD.lacunarity, CFG.FIELD.gain);
 
-    // curl近似（差分）
-    const e = 18;
-    const a1 = fieldAngle(x+e, y, t);
-    const a2 = fieldAngle(x, y+e, t);
-    const cx = Math.cos(a1) - Math.cos(a);
-    const cy = Math.sin(a2) - Math.sin(a);
+    // normalize-ish and apply speed
+    const n = U.norm2(c.x, c.y);
+    const fx = n.x * CFG.FIELD.curl;
+    const fy = n.y * CFG.FIELD.curl;
 
-    vx += -cy * CFG.FIELD.CURL;
-    vy +=  cx * CFG.FIELD.CURL;
+    // gentle pull to core to keep "核" present
+    const dx = (core.x - x);
+    const dy = (core.y - y);
+    const dn = U.norm2(dx, dy);
+    const pull = CFG.P.coreAttract;
 
-    const l = Math.hypot(vx, vy) || 1;
-    return [vx/l, vy/l];
-  }
+    // orbit component around core
+    const orbit = CFG.P.coreOrbit;
+    const oxv = -dn.y * orbit;
+    const oyv = dn.x * orbit;
 
-  window.Field = { sample };
+    return {
+      x: (fx + dn.x * pull + oxv) * CFG.FIELD.speed,
+      y: (fy + dn.y * pull + oyv) * CFG.FIELD.speed,
+    };
+  };
+
+  const reset = () => { t = 0; };
+
+  return { sample, reset };
 })();
