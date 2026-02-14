@@ -1,3 +1,4 @@
+<!-- index.html -->
 <!doctype html>
 <html lang="ja">
 <head>
@@ -5,107 +6,83 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <meta name="color-scheme" content="dark" />
   <title>Touching Light — Quiet Luxury</title>
-
   <style>
     :root{
       --bg:#05070d;
       --fg:rgba(240,245,255,.88);
-      --muted:rgba(240,245,255,.58);
-      --card:rgba(255,255,255,.07);
+      --muted:rgba(240,245,255,.55);
+      --card:rgba(255,255,255,.06);
       --border:rgba(255,255,255,.14);
       --shadow:rgba(0,0,0,.55);
     }
     html,body{
       margin:0; padding:0; height:100%;
-      background:var(--bg);
-      overflow:hidden;
+      background:var(--bg); overflow:hidden;
       -webkit-user-select:none; user-select:none;
       -webkit-touch-callout:none;
       -webkit-tap-highlight-color:transparent;
       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans JP","Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;
     }
-    canvas{
-      display:block;
-      width:100vw; height:100vh;
-      touch-action:none;
-    }
-
-    #ui{
-      position:fixed; inset:0;
-      pointer-events:none; /* ← canvasが必ず触れる */
+    canvas{ display:block; width:100vw; height:100vh; touch-action:none; }
+    .hud{
+      position:fixed; left:14px; top:14px;
+      display:flex; gap:12px; align-items:flex-start;
+      pointer-events:none;
     }
     .card{
-      position:absolute; left:16px; top:16px;
-      width:min(340px, calc(100vw - 32px));
+      pointer-events:none;
+      padding:14px 14px 12px;
+      border-radius:18px;
       background:var(--card);
       border:1px solid var(--border);
-      border-radius:18px;
-      box-shadow:0 16px 40px var(--shadow);
-      padding:14px 14px 12px 14px;
+      box-shadow:0 12px 36px var(--shadow);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
+      max-width: 70vw;
     }
-    .title{ color:var(--fg); font-weight:700; letter-spacing:.2px; line-height:1.2; }
-    .sub{ margin-top:8px; color:var(--muted); font-size:13px; line-height:1.55; }
-
+    .title{ color:var(--fg); font-weight:650; letter-spacing:.2px; }
+    .sub{ margin-top:6px; color:var(--muted); font-size:13px; line-height:1.4; }
     .btns{
-      position:absolute; right:16px; top:16px;
+      pointer-events:auto;
       display:flex; gap:10px;
-      pointer-events:auto; /* ボタンだけ反応 */
+      margin-left:2px;
     }
     button{
-      appearance:none;
-      border:1px solid var(--border);
-      background:rgba(255,255,255,.06);
+      appearance:none; border:1px solid var(--border);
+      background:rgba(255,255,255,.05);
       color:var(--fg);
       border-radius:16px;
-      padding:12px 14px;
-      font-weight:650;
-      letter-spacing:.2px;
-      box-shadow:0 10px 26px var(--shadow);
-    }
-    button:active{ transform:scale(.98); }
-
-    #toast{
-      position:fixed; left:50%; bottom:18px;
-      transform:translateX(-50%);
-      background:rgba(0,0,0,.55);
-      border:1px solid rgba(255,255,255,.14);
-      color:rgba(255,255,255,.9);
-      padding:10px 12px;
-      border-radius:14px;
-      font-size:13px;
-      display:none;
-      pointer-events:none;
+      padding:10px 14px;
+      font-size:14px;
+      font-weight:600;
+      box-shadow:0 10px 28px var(--shadow);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
     }
+    button:active{ transform: translateY(1px); }
   </style>
 </head>
-
 <body>
   <canvas id="c"></canvas>
 
-  <div id="ui">
+  <div class="hud">
     <div class="card">
       <div class="title">Touching Light — Quiet Luxury</div>
-      <div class="sub">tap / drag / long-press<br>静かな粒子と光の膜が、触れ方で変わります</div>
+      <div class="sub">tap / drag / long-press<br>静かな粒子と光の核が、触れ方で変わります</div>
     </div>
-
     <div class="btns">
-      <button id="resetBtn">Reset</button>
+      <button id="resetBtn" type="button">Reset</button>
     </div>
-
-    <div id="toast"></div>
   </div>
 
+  <!-- IMPORTANT: order matters -->
   <script src="./cfg.js"></script>
   <script src="./utils.js"></script>
-  <script src="./input.js"></script>
   <script src="./field.js"></script>
+  <script src="./void_shadow.js"></script>
   <script src="./particles.js"></script>
   <script src="./render.js"></script>
-  <script src="./void_shadow.js"></script>
+  <script src="./input.js"></script>
   <script src="./sketch.js"></script>
 </body>
 </html>
