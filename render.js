@@ -1,187 +1,87 @@
 // render.js
 (() => {
-  function Renderer(app) {
-    this.app = app;
-    this.bgTex = null;
-    this.bgReady = false;
+  "use strict";
 
-    // offscreen for bloom
-    this.bloom = document.createElement("canvas");
-    this.bctx = this.bloom.getContext("2d");
+  function clear(ctx, w, h) {
+    const dpr = U.getDPR();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, w * dpr, h * dpr);
+    ctx.fillStyle = window.CFG.BG;
+    ctx.fillRect(0, 0, w * dpr, h * dpr);
   }
 
-  Renderer.prototype.resize = function () {
-    const a = this.app;
-    const w = a.w, h = a.h;
-
-    // background texture fixed size (lighter)
-    const bw = Math.max(320, Math.floor(w * 0.6));
-    const bh = Math.max(320, Math.floor(h * 0.6));
-    this.bgTex = VoidShadow.makeVoidTexture(bw, bh, 1337);
-    this.bgReady = true;
-
-    // bloom canvas
-    this.bloom.width = w;
-    this.bloom.height = h;
-  };
-
-  Renderer.prototype.drawBackground = function (ctx) {
-    const a = this.app;
-    const w = a.w, h = a.h;
-
-    ctx.fillStyle = CFG.BG_BASE;
-    ctx.fillRect(0, 0, w, h);
-
-    if (this.bgReady && this.bgTex) {
-      // tile
-      ctx.globalAlpha = 1;
-      const pat = ctx.createPattern(this.bgTex, "repeat");
-      ctx.fillStyle = pat;
-      ctx.fillRect(0, 0, w, h);
+  function drawGrain(ctx, w, h, strength = 0.06) {
+    const dpr = U.getDPR();
+    const cw = Math.floor(w * dpr), ch = Math.floor(h * dpr);
+    const img = ctx.getImageData(0, 0, cw, ch);
+    const d = img.data;
+    const n = d.length;
+    for (let i = 0; i < n; i += 4) {
+      const g = (Math.random() - 0.5) * 255 * strength;
+      d[i] = U.clamp(d[i] + g, 0, 255);
+      d[i + 1] = U.clamp(d[i + 1] + g, 0, 255);
+      d[i + 2] = U.clamp(d[i + 2] + g, 0, 255);
     }
-  };
+    ctx.putImageData(img, 0, 0);
+  }
 
-  Renderer.prototype.drawLight = function (ctx) {
-    const a = this.app;
-    const w = a.w, h = a.h;
+  function drawParticles(ctx, w, h, P) {
+    const dpr = U.getDPR();
+    const cw = w * dpr, ch = h * dpr;
 
-    const cx = a.light.x * w;
-    const cy = a.light.y * h;
-    const baseR = Math.min(w, h) * CFG.LIGHT_CORE_RADIUS;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineCap = "round";
 
-    // core
-    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, baseR);
-    g.addColorStop(0, "rgba(255,255,255,0.92)");
-    g.addColorStop(CFG.LIGHT_CORE_SOFT, "rgba(255,255,255,0.22)");
-    g.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.globalCompositeOperation = "screen";
-    ctx.globalAlpha = CFG.LIGHT_CORE_ALPHA;
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(cx, cy, baseR, 0, Math.PI * 2);
-    ctx.fill();
+    // subtle trails
+    ctx.fillStyle = "rgba(5,7,13,0.06)";
+    ctx.fillRect(0, 0, cw, ch);
 
-    // rings (quiet layers)
-    ctx.globalAlpha = 1;
-    for (let i = 0; i < CFG.LIGHT_RING_COUNT; i++) {
-      const rr = baseR * (1 + i * CFG.LIGHT_RING_STEP);
-      ctx.globalAlpha = CFG.LIGHT_RING_ALPHA * (1 - i / CFG.LIGHT_RING_COUNT);
-      ctx.strokeStyle = "rgba(240,245,255,.35)";
-      ctx.lineWidth = Math.max(1, baseR * 0.012);
+    for (let i = 0; i < P.n; i++) {
+      const x = P.x[i] * dpr;
+      const y = P.y[i] * dpr;
+
+      const a = P.a[i];
+      const s = P.s[i] * dpr;
+
+      // cool-white with slight hue drift
+      const tint = P.h[i];
+      const r = 220 + tint * 15;
+      const g = 230 + tint * 18;
+      const b = 245 + tint * 10;
+
       ctx.beginPath();
-      ctx.arc(cx, cy, rr, -Math.PI * 0.45, Math.PI * 1.75);
-      ctx.stroke();
-    }
+      ctx.fillStyle = U.rgba(r, g, b, a * 0.55);
+      ctx.arc(x, y, s * 0.55, 0, Math.PI * 2);
+      ctx.fill();
 
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = "source-over";
-  };
-
-  Renderer.prototype.drawParticles = function (ctx) {
-    const a = this.app;
-    const w = a.w, h = a.h;
-
-    ctx.globalCompositeOperation = "screen";
-
-    for (const p of a.ps.p) {
-      const x = p.x * w;
-      const y = p.y * h;
-
-      // fade near core to avoid “white disaster”
-      const dx = (p.x - a.light.x);
-      const dy = (p.y - a.light.y);
-      const d = Math.sqrt(dx * dx + dy * dy);
-      const coreFade = U.smoothstep(0.0, CFG.LIGHT_CORE_RADIUS * 0.55, d);
-      const a0 = p.alpha * coreFade;
-
-      // slightly warm impurities
-      const col = p.warm ? `rgba(255,220,180,${a0})` : `rgba(220,235,255,${a0})`;
-
-      ctx.fillStyle = col;
+      // micro halo
       ctx.beginPath();
-      ctx.arc(x, y, p.size * a.dpr, 0, Math.PI * 2);
+      ctx.fillStyle = U.rgba(r, g, b, a * 0.18);
+      ctx.arc(x, y, s * 1.9, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    ctx.globalCompositeOperation = "source-over";
-  };
+    ctx.restore();
+  }
 
-  Renderer.prototype.drawBloom = function (ctx) {
-    const a = this.app;
-    const w = a.w, h = a.h;
+  function drawVeil(ctx, w, h, t) {
+    const dpr = U.getDPR();
+    const cw = w * dpr, ch = h * dpr;
 
-    // simple bloom: render light into bloom canvas then blur by scaling
-    const b = this.bctx;
-    b.clearRect(0, 0, w, h);
-
-    // draw a soft blob around light and around touch trail
-    const cx = a.light.x * w;
-    const cy = a.light.y * h;
-    const r = Math.min(w, h) * CFG.BLOOM_RADIUS;
-
-    let g = b.createRadialGradient(cx, cy, 0, cx, cy, r);
-    g.addColorStop(0, "rgba(255,255,255,.65)");
-    g.addColorStop(1, "rgba(255,255,255,0)");
-    b.fillStyle = g;
-    b.beginPath();
-    b.arc(cx, cy, r, 0, Math.PI * 2);
-    b.fill();
-
-    if (a.touch.trail.length) {
-      for (let i = 0; i < a.touch.trail.length; i++) {
-        const t = a.touch.trail[i];
-        const tx = t.x * w;
-        const ty = t.y * h;
-        const tr = r * (0.35 + i / a.touch.trail.length * 0.55);
-        const ga = 0.18 * (i / a.touch.trail.length);
-        const tg = b.createRadialGradient(tx, ty, 0, tx, ty, tr);
-        tg.addColorStop(0, `rgba(255,255,255,${ga})`);
-        tg.addColorStop(1, "rgba(255,255,255,0)");
-        b.fillStyle = tg;
-        b.beginPath();
-        b.arc(tx, ty, tr, 0, Math.PI * 2);
-        b.fill();
-      }
-    }
-
-    // blur-ish: scale down then up a few times
+    ctx.save();
     ctx.globalCompositeOperation = "screen";
-    ctx.globalAlpha = CFG.BLOOM_STRENGTH;
+    const ox = (Math.sin(t * 0.00025) * 0.5 + 0.5) * cw;
+    const oy = (Math.cos(t * 0.00018) * 0.5 + 0.5) * ch;
 
-    for (let i = 0; i < 3; i++) {
-      const s = 0.55 + i * 0.12;
-      const sw = w * s, sh = h * s;
-      const ox = (w - sw) * 0.5;
-      const oy = (h - sh) * 0.5;
-      ctx.drawImage(this.bloom, ox, oy, sw, sh);
-    }
+    const rg = ctx.createRadialGradient(ox, oy, 0, ox, oy, Math.min(cw, ch) * 0.85);
+    rg.addColorStop(0.0, "rgba(230,240,255,0.10)");
+    rg.addColorStop(0.45, "rgba(230,240,255,0.05)");
+    rg.addColorStop(1.0, "rgba(0,0,0,0)");
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.restore();
+  }
 
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = "source-over";
-  };
-
-  Renderer.prototype.frame = function () {
-    const a = this.app;
-    const ctx = a.ctx;
-
-    // ctx sanity
-    if (!ctx || typeof ctx.beginPath !== "function") {
-      throw new Error("Canvas 2D context not available (ctx invalid).");
-    }
-
-    this.drawBackground(ctx);
-    this.drawLight(ctx);
-    this.drawParticles(ctx);
-    this.drawBloom(ctx);
-
-    // tiny exposure clamp overlay to avoid white burn
-    ctx.globalCompositeOperation = "multiply";
-    ctx.globalAlpha = 0.06;
-    ctx.fillStyle = "rgba(240,245,255,1)";
-    ctx.fillRect(0, 0, a.w, a.h);
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = "source-over";
-  };
-
-  window.Renderer = Renderer;
+  window.Render = { clear, drawParticles, drawVeil, drawGrain };
 })();
