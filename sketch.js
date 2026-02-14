@@ -1,90 +1,101 @@
 // sketch.js
-// ------------------------------------------------------------
-// App bootstrap + main loop
-// ------------------------------------------------------------
-
-function createApp() {
+(() => {
   const canvas = document.getElementById("c");
-  if (!canvas) throw new Error("Canvas #c not found");
+  const resetBtn = document.getElementById("resetBtn");
+  const saveBtn  = document.getElementById("saveBtn");
 
-  // Init modules
-  Render.init(canvas);
-  Input.attach(canvas);
+  // Save表示制御
+  if (CFG.UI.showSave) saveBtn.style.display = "inline-block";
 
-  // State
-  const core = Core.create();
-  let last = performance.now();
+  // 初期化
+  const resizeAll = () => {
+    const W = window.innerWidth;
+    const H = window.innerHeight;
 
-  function resize() {
-    const dpr = CFG?.PD ?? Math.min(window.devicePixelRatio || 1, 2);
-    const w = Math.max(1, window.innerWidth);
-    const h = Math.max(1, window.innerHeight);
+    Render.resize(canvas, W, H);
+    Particles.resize(W, H);
+  };
 
-    canvas.style.width = w + "px";
-    canvas.style.height = h + "px";
-    canvas.width = Math.floor(w * dpr);
-    canvas.height = Math.floor(h * dpr);
+  const fullReset = () => {
+    Field.reset();
+    Particles.reset();
+    U.toast("reset", 650);
+  };
 
-    Render.resize(w, h, dpr);
-    Particles.resize(w, h, dpr);
-  }
+  // iPhone Safariで「ボタン押したのにcanvas側が反応」問題を避ける
+  resetBtn.addEventListener("click", (e) => { e.preventDefault(); fullReset(); }, { passive:false });
 
-  // Ensure initial sizing
-  resize();
-  window.addEventListener("resize", resize, { passive: true });
+  // 保存はオプション（iOSは挙動が端末差あるのでデフォルト非表示）
+  saveBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    try{
+      const url = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "touching-light.png";
+      a.click();
+      U.toast("saved", 900);
+    }catch(err){
+      U.toast("save failed", 1200);
+    }
+  }, { passive:false });
 
-  // Main loop
-  function frame(now) {
-    const dt = Math.min(0.033, Math.max(0.001, (now - last) / 1000));
-    last = now;
+  Input.bind(canvas);
+  resizeAll();
+  fullReset();
 
-    // Read input snapshot for this frame
-    const inp = Input.get();
+  // perf auto-tuning（粒子が多すぎるとiPhoneでカクつく）
+  let last = U.now();
+  let fps = 60;
+  let perfLast = U.now();
+  let degradeStep = 0;
 
-    // Update sim
-    Core.step(core, dt, inp);
-    Particles.step(dt, core, inp);
+  const loop = () => {
+    const t = U.now();
+    let dt = (t - last) / 1000;
+    last = t;
+    dt = U.stableDt(dt);
 
-    // ---- ここが「1行だけ変更」ポイント ----
-    // Render.draw は (t, core, data, input) を想定しているため、inp を渡す
-    Render.draw(now / 1000, core, Particles.data(), inp);
+    // 入力更新
+    Input.step();
+    const inp = Input.state();
 
-    requestAnimationFrame(frame);
-  }
+    // 粒子更新
+    Particles.step(dt, inp);
 
-  requestAnimationFrame(frame);
+    // 描画
+    Render.draw(Particles.get());
 
-  // Buttons (optional): Reset / Save
-  const btnReset = document.getElementById("btnReset");
-  if (btnReset) {
-    btnReset.addEventListener("click", () => {
-      Core.reset(core);
-      Particles.reset(core);
-    });
-  }
+    // FPS推定
+    fps = U.lerp(fps, 1/dt, 0.08);
 
-  const btnSave = document.getElementById("btnSave");
-  if (btnSave) {
-    btnSave.addEventListener("click", () => {
-      try {
-        const url = canvas.toDataURL("image/png");
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "untitled.png";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      } catch (e) {
-        console.warn("Save failed:", e);
+    // 自動軽量化（必要なときだけ）
+    if (t - perfLast > CFG.PERF.checkIntervalMs) {
+      perfLast = t;
+
+      if (fps < CFG.PERF.degradeBelowFps && degradeStep < CFG.PERF.maxDegradeSteps) {
+        // 粒子数を減らす（霧を減らすのが一番効くが、ここでは全体リセットで簡単に）
+        degradeStep++;
+        CFG.P.countMobile = Math.floor(CFG.P.countMobile * 0.88);
+        CFG.P.countDesktop = Math.floor(CFG.P.countDesktop * 0.92);
+        fullReset();
+        U.toast(`perf tune (-)`, 700);
+      } else if (fps > CFG.PERF.improveAboveFps && degradeStep > 0) {
+        degradeStep--;
+        CFG.P.countMobile = Math.floor(CFG.P.countMobile / 0.92);
+        CFG.P.countDesktop = Math.floor(CFG.P.countDesktop / 0.96);
+        fullReset();
+        U.toast(`perf tune (+)`, 700);
       }
-    });
-  }
-}
+    }
 
-// Boot
-try {
-  createApp();
-} catch (e) {
-  console.error(e);
-  alert("JavaScript error\n" + (e?.message || e));
-}
+    requestAnimationFrame(loop);
+  };
+
+  window.addEventListener("resize", () => {
+    resizeAll();
+    fullReset();
+  });
+
+  requestAnimationFrame(loop);
+})();
