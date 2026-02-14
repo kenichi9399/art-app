@@ -1,24 +1,22 @@
 // utils.js
-
 const U = (() => {
   const TAU = Math.PI * 2;
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const lerp = (a, b, t) => a + (b - a) * t;
+  const lerp  = (a, b, t) => a + (b - a) * t;
   const smoothstep = (t) => t * t * (3 - 2 * t);
 
   const rand = (a = 1, b = 0) => Math.random() * (a - b) + b;
+
   const randn = () => {
-    // Box-Muller
     let u = 0, v = 0;
     while (u === 0) u = Math.random();
     while (v === 0) v = Math.random();
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v);
   };
 
-  // Hash-based value noise (fast, stable)
+  // integer hash → [0..1]
   const hash2 = (x, y) => {
-    // integer hash
     let h = x * 374761393 + y * 668265263;
     h = (h ^ (h >> 13)) * 1274126177;
     return ((h ^ (h >> 16)) >>> 0) / 4294967295;
@@ -48,7 +46,7 @@ const U = (() => {
     return sum / Math.max(1e-6, norm);
   };
 
-  // Curl-ish field from finite differences on fbm
+  // curl-ish field from finite differences
   const curl2 = (x, y, eps, oct, lac, gain) => {
     const n1 = fbm2(x, y + eps, oct, lac, gain);
     const n2 = fbm2(x, y - eps, oct, lac, gain);
@@ -58,7 +56,6 @@ const U = (() => {
     const n4 = fbm2(x - eps, y, oct, lac, gain);
     const b = (n3 - n4) / (2 * eps);
 
-    // perpendicular
     return { x: a, y: -b };
   };
 
@@ -83,11 +80,11 @@ const U = (() => {
     toast._t = setTimeout(() => { el.style.display = "none"; }, ms);
   };
 
-  return {
-    TAU, clamp, lerp, smoothstep,
-    rand, randn,
-    noise2, fbm2, curl2,
-    dist2, norm2,
-    now, toast
-  };
+  // dt安定化（iPhoneのタブ復帰でdtが跳ねるのを吸収）
+  const stableDt = (dt) => clamp(dt, 1/120, 1/20);
+
+  // DPR clamp
+  const getDpr = () => clamp(window.devicePixelRatio || 1, 1, CFG.RENDER.dprMax);
+
+  return { TAU, clamp, lerp, smoothstep, rand, randn, noise2, fbm2, curl2, dist2, norm2, now, toast, stableDt, getDpr };
 })();
