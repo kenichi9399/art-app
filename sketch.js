@@ -1,101 +1,58 @@
 // sketch.js
-(() => {
-  const canvas = document.getElementById("c");
-  const resetBtn = document.getElementById("resetBtn");
-  const saveBtn  = document.getElementById("saveBtn");
+(function(){
+  const canvas = document.getElementById('c');
+  const resetBtn = document.getElementById('resetBtn');
 
-  // Save表示制御
-  if (CFG.UI.showSave) saveBtn.style.display = "inline-block";
+  const renderer = new Renderer(canvas);
+  const field = new Field();
+  const bg = new VoidShadow();
+  const input = new Input(canvas);
 
-  // 初期化
-  const resizeAll = () => {
-    const W = window.innerWidth;
-    const H = window.innerHeight;
+  let system = null;
 
-    Render.resize(canvas, W, H);
-    Particles.resize(W, H);
-  };
+  function resize(){
+    const w = window.innerWidth;
+    const h = window.innerHeight;
 
-  const fullReset = () => {
-    Field.reset();
-    Particles.reset();
-    U.toast("reset", 650);
-  };
+    const dpr = Math.min(window.devicePixelRatio || 1, CFG.DPR_CAP);
 
-  // iPhone Safariで「ボタン押したのにcanvas側が反応」問題を避ける
-  resetBtn.addEventListener("click", (e) => { e.preventDefault(); fullReset(); }, { passive:false });
+    renderer.resize(w,h,dpr);
+    bg.resize(w,h,dpr);
 
-  // 保存はオプション（iOSは挙動が端末差あるのでデフォルト非表示）
-  saveBtn.addEventListener("click", (e) => {
+    if(!system) system = new ParticleSystem(w,h);
+    system.resize(w,h);
+  }
+
+  function reset(){
+    if(system) system.reset();
+  }
+
+  resetBtn.addEventListener('click', (e)=>{
     e.preventDefault();
-    try{
-      const url = canvas.toDataURL("image/png");
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "touching-light.png";
-      a.click();
-      U.toast("saved", 900);
-    }catch(err){
-      U.toast("save failed", 1200);
-    }
-  }, { passive:false });
+    reset();
+  }, {passive:false});
 
-  Input.bind(canvas);
-  resizeAll();
-  fullReset();
+  // iOS Safari: orientationchange timing is tricky
+  window.addEventListener('resize', ()=>setTimeout(resize, 50));
+  window.addEventListener('orientationchange', ()=>setTimeout(resize, 120));
 
-  // perf auto-tuning（粒子が多すぎるとiPhoneでカクつく）
+  resize();
+
   let last = U.now();
-  let fps = 60;
-  let perfLast = U.now();
-  let degradeStep = 0;
+  function loop(){
+    const now = U.now();
+    let dt = now - last;
+    last = now;
 
-  const loop = () => {
-    const t = U.now();
-    let dt = (t - last) / 1000;
-    last = t;
-    dt = U.stableDt(dt);
+    // cap dt to avoid huge jumps when tab returns
+    dt = Math.min(dt, 40);
 
-    // 入力更新
-    Input.step();
-    const inp = Input.state();
-
-    // 粒子更新
-    Particles.step(dt, inp);
-
-    // 描画
-    Render.draw(Particles.get());
-
-    // FPS推定
-    fps = U.lerp(fps, 1/dt, 0.08);
-
-    // 自動軽量化（必要なときだけ）
-    if (t - perfLast > CFG.PERF.checkIntervalMs) {
-      perfLast = t;
-
-      if (fps < CFG.PERF.degradeBelowFps && degradeStep < CFG.PERF.maxDegradeSteps) {
-        // 粒子数を減らす（霧を減らすのが一番効くが、ここでは全体リセットで簡単に）
-        degradeStep++;
-        CFG.P.countMobile = Math.floor(CFG.P.countMobile * 0.88);
-        CFG.P.countDesktop = Math.floor(CFG.P.countDesktop * 0.92);
-        fullReset();
-        U.toast(`perf tune (-)`, 700);
-      } else if (fps > CFG.PERF.improveAboveFps && degradeStep > 0) {
-        degradeStep--;
-        CFG.P.countMobile = Math.floor(CFG.P.countMobile / 0.92);
-        CFG.P.countDesktop = Math.floor(CFG.P.countDesktop / 0.96);
-        fullReset();
-        U.toast(`perf tune (+)`, 700);
-      }
+    field.step(dt);
+    if(system){
+      system.step(dt, field, input);
+      renderer.draw(system, bg);
     }
-
     requestAnimationFrame(loop);
-  };
-
-  window.addEventListener("resize", () => {
-    resizeAll();
-    fullReset();
-  });
-
+  }
   requestAnimationFrame(loop);
 })();
