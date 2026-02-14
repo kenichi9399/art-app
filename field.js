@@ -1,28 +1,40 @@
 // field.js
-(() => {
-  "use strict";
+// フローフィールド：fbm + curl 的な回転を生成
 
-  class FlowField {
-    constructor(seed = 1) {
-      this.seed = seed >>> 0;
-    }
+(function(){
+  const { fbm2 } = window.U;
 
-    // returns angle in radians
-    angle(x, y) {
-      const ns = window.CFG.noiseScale;
-      const n1 = U.valueNoise2D(x * ns, y * ns, this.seed);
-      const n2 = U.valueNoise2D(x * ns * 1.9 + 10.0, y * ns * 1.9 - 7.0, this.seed ^ 0x9e3779b9);
-      const t = (n1 * 0.65 + n2 * 0.35);
-      return t * Math.PI * 2.0;
-    }
+  function fieldAngle(x, y, t){
+    const s = CFG.FIELD.SCALE;
+    const d = CFG.FIELD.DRIFT;
 
-    // curl-like vector (dx,dy)
-    vec(x, y) {
-      const a = this.angle(x, y);
-      const c = Math.cos(a), s = Math.sin(a);
-      return { x: c, y: s };
-    }
+    // fbm を2系統で作り、角度にする
+    const n1 = fbm2(x*s + t*d, y*s - t*d, CFG.FIELD.FBM_OCT, CFG.FIELD.FBM_LAC, CFG.FIELD.FBM_GAIN);
+    const n2 = fbm2(x*s - t*d, y*s + t*d, CFG.FIELD.FBM_OCT, CFG.FIELD.FBM_LAC, CFG.FIELD.FBM_GAIN);
+
+    // 角度（-pi..pi）
+    return (n1 * 2.2 + n2 * 1.3) * Math.PI;
   }
 
-  window.FlowField = FlowField;
+  // curl っぽく：角度からベクトルを作り、周囲差分で回転強化
+  function sample(x, y, t){
+    const a = fieldAngle(x, y, t);
+    let vx = Math.cos(a);
+    let vy = Math.sin(a);
+
+    // curl近似（差分）
+    const e = 18;
+    const a1 = fieldAngle(x+e, y, t);
+    const a2 = fieldAngle(x, y+e, t);
+    const cx = Math.cos(a1) - Math.cos(a);
+    const cy = Math.sin(a2) - Math.sin(a);
+
+    vx += -cy * CFG.FIELD.CURL;
+    vy +=  cx * CFG.FIELD.CURL;
+
+    const l = Math.hypot(vx, vy) || 1;
+    return [vx/l, vy/l];
+  }
+
+  window.Field = { sample };
 })();
