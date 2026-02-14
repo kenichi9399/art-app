@@ -1,90 +1,57 @@
 // utils.js
-const U = (() => {
-  const TAU = Math.PI * 2;
+(function(){
+  const U = {};
+  U.clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  U.lerp = (a,b,t)=>a+(b-a)*t;
+  U.smoothstep = (a,b,t)=>{
+    t=U.clamp((t-a)/(b-a),0,1); return t*t*(3-2*t);
+  };
+  U.fract = (x)=>x-Math.floor(x);
 
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const lerp  = (a, b, t) => a + (b - a) * t;
-  const smoothstep = (t) => t * t * (3 - 2 * t);
-
-  const rand = (a = 1, b = 0) => Math.random() * (a - b) + b;
-
-  const randn = () => {
-    let u = 0, v = 0;
-    while (u === 0) u = Math.random();
-    while (v === 0) v = Math.random();
-    return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v);
+  // Deterministic hash -> [0,1)
+  U.hash = (x,y)=>{
+    const s = Math.sin(x*127.1 + y*311.7)*43758.5453123;
+    return U.fract(s);
   };
 
-  // integer hash → [0..1]
-  const hash2 = (x, y) => {
-    let h = x * 374761393 + y * 668265263;
-    h = (h ^ (h >> 13)) * 1274126177;
-    return ((h ^ (h >> 16)) >>> 0) / 4294967295;
+  // Value noise (cheap)
+  U.vnoise = (x,y)=>{
+    const xi=Math.floor(x), yi=Math.floor(y);
+    const xf=x-xi, yf=y-yi;
+    const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
+    const a=U.hash(xi,yi);
+    const b=U.hash(xi+1,yi);
+    const c=U.hash(xi,yi+1);
+    const d=U.hash(xi+1,yi+1);
+    const ab=U.lerp(a,b,u);
+    const cd=U.lerp(c,d,u);
+    return U.lerp(ab,cd,v);
   };
 
-  const noise2 = (x, y) => {
-    const xi = Math.floor(x), yi = Math.floor(y);
-    const xf = x - xi, yf = y - yi;
-    const u = smoothstep(xf), v = smoothstep(yf);
-
-    const a = hash2(xi, yi);
-    const b = hash2(xi + 1, yi);
-    const c = hash2(xi, yi + 1);
-    const d = hash2(xi + 1, yi + 1);
-
-    return lerp(lerp(a, b, u), lerp(c, d, u), v);
-  };
-
-  const fbm2 = (x, y, oct = 4, lac = 2.0, gain = 0.5) => {
-    let amp = 1.0, freq = 1.0, sum = 0.0, norm = 0.0;
-    for (let i = 0; i < oct; i++) {
-      sum += amp * (noise2(x * freq, y * freq) * 2 - 1);
-      norm += amp;
-      amp *= gain;
-      freq *= lac;
+  // fbm
+  U.fbm = (x,y,oct=4)=>{
+    let f=0, amp=0.5, freq=1;
+    for(let i=0;i<oct;i++){
+      f += amp*(U.vnoise(x*freq,y*freq)*2-1);
+      freq*=2; amp*=0.5;
     }
-    return sum / Math.max(1e-6, norm);
+    return f;
   };
 
-  // curl-ish field from finite differences
-  const curl2 = (x, y, eps, oct, lac, gain) => {
-    const n1 = fbm2(x, y + eps, oct, lac, gain);
-    const n2 = fbm2(x, y - eps, oct, lac, gain);
-    const a = (n1 - n2) / (2 * eps);
+  U.rand = (a=1)=>Math.random()*a;
+  U.randRange=(a,b)=>a+(b-a)*Math.random();
 
-    const n3 = fbm2(x + eps, y, oct, lac, gain);
-    const n4 = fbm2(x - eps, y, oct, lac, gain);
-    const b = (n3 - n4) / (2 * eps);
-
-    return { x: a, y: -b };
+  U.pickSize = ()=>{
+    // 0.0-0.78 tiny, 0.78-0.96 mid, 0.96-1.0 big
+    const r=Math.random();
+    const R=(lohi)=>U.randRange(lohi[0],lohi[1]);
+    if(r<0.78) return R(CFG.SIZE_TINY);
+    if(r<0.96) return R(CFG.SIZE_MID);
+    return R(CFG.SIZE_BIG);
   };
 
-  const dist2 = (ax, ay, bx, by) => {
-    const dx = ax - bx, dy = ay - by;
-    return Math.sqrt(dx * dx + dy * dy);
-  };
+  // safe rAF time step
+  U.now = ()=>performance.now();
 
-  const norm2 = (x, y) => {
-    const d = Math.sqrt(x * x + y * y) || 1e-6;
-    return { x: x / d, y: y / d, d };
-  };
-
-  const now = () => performance.now();
-
-  const toast = (msg, ms = 1400) => {
-    const el = document.getElementById("toast");
-    if (!el) return;
-    el.textContent = msg;
-    el.style.display = "block";
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => { el.style.display = "none"; }, ms);
-  };
-
-  // dt安定化（iPhoneのタブ復帰でdtが跳ねるのを吸収）
-  const stableDt = (dt) => clamp(dt, 1/120, 1/20);
-
-  // DPR clamp
-  const getDpr = () => clamp(window.devicePixelRatio || 1, 1, CFG.RENDER.dprMax);
-
-  return { TAU, clamp, lerp, smoothstep, rand, randn, noise2, fbm2, curl2, dist2, norm2, now, toast, stableDt, getDpr };
+  window.U = U;
 })();
