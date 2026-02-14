@@ -27,13 +27,12 @@
     canvas{
       display:block;
       width:100vw; height:100vh;
-      touch-action:none; /* ← iOS Safariで重要 */
+      touch-action:none;
     }
 
-    /* UIはcanvasの上。基本はタッチ透過にして、ボタンだけ反応させる */
     #ui{
       position:fixed; inset:0;
-      pointer-events:none;
+      pointer-events:none; /* ← canvasが必ず触れる */
     }
     .card{
       position:absolute; left:16px; top:16px;
@@ -52,7 +51,7 @@
     .btns{
       position:absolute; right:16px; top:16px;
       display:flex; gap:10px;
-      pointer-events:auto; /* ←ボタンは反応させる */
+      pointer-events:auto; /* ボタンだけ反応 */
     }
     button{
       appearance:none;
@@ -94,14 +93,12 @@
     </div>
 
     <div class="btns">
-      <button id="saveBtn" style="display:none">保存</button>
       <button id="resetBtn">Reset</button>
     </div>
 
     <div id="toast"></div>
   </div>
 
-  <!-- 依存順：cfg → utils → input → field → particles → render → void_shadow → sketch -->
   <script src="./cfg.js"></script>
   <script src="./utils.js"></script>
   <script src="./input.js"></script>
