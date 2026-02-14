@@ -1,42 +1,28 @@
 // field.js
-const Field = (() => {
-  let t = 0;
+(function(){
+  class Field {
+    constructor(){
+      this.t = 0;
+    }
+    step(dt){
+      this.t += dt*0.00035;
+    }
+    // returns velocity vector at (x,y) in screen coords
+    sample(x,y,w,h){
+      const s = CFG.FIELD_SCALE;
+      // normalize to make behavior stable across sizes
+      const nx = (x - w*0.5) * s;
+      const ny = (y - h*0.5) * s;
 
-  const sample = (x, y, dt, core) => {
-    t += dt;
+      // fbm-based angle
+      const a = U.fbm(nx + this.t*0.9, ny - this.t*0.7, 4);
+      const b = U.fbm(nx - this.t*0.6, ny + this.t*0.8, 3);
+      const ang = (a*2.4 + b*1.6);
 
-    const sc = CFG.FIELD.scale;
-    const ox = x * 2 - 1;
-    const oy = y * 2 - 1;
-
-    const tx = ox + t * CFG.FIELD.drift;
-    const ty = oy - t * CFG.FIELD.drift * 0.6;
-
-    const eps = 0.0025;
-    const c = U.curl2(tx * sc, ty * sc, eps, CFG.FIELD.layers, CFG.FIELD.lacunarity, CFG.FIELD.gain);
-
-    const n = U.norm2(c.x, c.y);
-    const fx = n.x * CFG.FIELD.curl;
-    const fy = n.y * CFG.FIELD.curl;
-
-    // coreへの“薄い引力”で画面に芯を残す
-    const dx = (core.x - x);
-    const dy = (core.y - y);
-    const dn = U.norm2(dx, dy);
-
-    const pull = CFG.P.coreAttract;
-    const orbit = CFG.P.coreOrbit;
-
-    const oxv = -dn.y * orbit;
-    const oyv =  dn.x * orbit;
-
-    return {
-      x: (fx + dn.x * pull + oxv) * CFG.FIELD.speed,
-      y: (fy + dn.y * pull + oyv) * CFG.FIELD.speed
-    };
-  };
-
-  const reset = () => { t = 0; };
-
-  return { sample, reset };
+      const vx = Math.cos(ang);
+      const vy = Math.sin(ang);
+      return {vx, vy};
+    }
+  }
+  window.Field = Field;
 })();
