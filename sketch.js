@@ -1,205 +1,168 @@
 // sketch.js
-// ------------------------------------------------------------
-// Touching Light — Quiet Luxury (v1.1 sketch)
-// 目的：
-// - 分割ファイルを “確実に動かす” 統合（黒画面事故を避ける）
-// - Render / FlowField / Particles / VoidShadow / Input を正しい順序で駆動
-// - タップ/ドラッグ/長押しで「見た目と空気」が変わる
-//
-// 期待する同階層ファイル：
-//   cfg.js / field.js / particles.js / render.js / void_shadow.js / input.js
-//
-// 注意：
-// - p5.js は index.html で読み込み済み
-// - index.html の window.__TL__.onSketchStarted() があれば呼ぶ（ローディング消し）
-//
-// ------------------------------------------------------------
+(() => {
+  "use strict";
 
-let field;
-let started = false;
+  class Sketch {
+    constructor(canvas, ctx) {
+      this.canvas = canvas;
+      this.ctx = ctx;
 
-// “空気”の状態（時間とともにゆっくり変わる）
-const Atmos = {
-  phase: 0,
-  mood: 0,      // 0..1
-  prayer: 0,    // 0..1  (長押し等で上がる)
-  pulse: 0,     // 0..1  (タップで跳ねる)
-};
+      this.size = { w: 0, h: 0, dpr: 1, cw: 0, ch: 0 };
+      this.P = new Particles(CFG.N);
 
-function setup() {
-  // 画面いっぱい（スマホ前提）
-  createCanvas(windowWidth, windowHeight);
-  pixelDensity(1); // iPhoneで重くなりがちなので固定（Render側でperfScaleあり）
-  frameRate((window.CFG && CFG.FPS) || 60);
+      this.seed = (Math.random() * 1e9) >>> 0;
+      this.field = new FlowField(this.seed);
 
-  // Init modules
-  if (window.Render) Render.init(this);
-  field = new FlowField(width, height);
+      this.t = 0;
+      this.last = U.now();
 
-  if (window.Particles) {
-    // cfg.js の値を尊重しつつ、粒子数などを上書きしたい場合はここで
-    Particles.init(width, height, {
-      // ここは必要なら調整：最初はcfg.js優先
-      // P_COUNT: 1500
-    });
-  }
+      // interaction state
+      this.pointer = {
+        down: false,
+        x: 0, y: 0,
+        vx: 0, vy: 0,
+        lastX: 0, lastY: 0,
+        downAt: 0,
+        longFired: false
+      };
 
-  if (window.VoidShadow) VoidShadow.init(width, height);
-
-  // Input: canvas のDOMに確実に紐付ける
-  if (window.Input) {
-    Input.resize(width, height);
-    Input.init(canvas && canvas.elt ? canvas.elt : document.body);
-  }
-
-  // Render初期：最初の一発は背景を作って“真っ黒”を避ける
-  if (window.Render) {
-    Render.beginFrame();
-    Render.fade();
-    Render.drawBaseGradient();
-    Render.paperDust();
-    Render.endFrame();
-  }
-
-  started = true;
-
-  // index.html の loading を消すフック
-  if (window.__TL__ && typeof window.__TL__.onSketchStarted === "function") {
-    window.__TL__.onSketchStarted();
-  }
-}
-
-function draw() {
-  if (!started) return;
-
-  // dt 正規化
-  const dtn = clamp(deltaTime / 16.6, 0.5, 2.2);
-
-  // Input update
-  let inp = null;
-  if (window.Input) {
-    Input.step(dtn);
-    inp = Input.state();
-  } else {
-    inp = { x: mouseX, y: mouseY, dx: movedX, dy: movedY, down: mouseIsPressed, held: false, mode: "calm", intensity: 0 };
-  }
-
-  // Atmos update（ゆっくり変える）
-  Atmos.phase += 0.006 * dtn;
-
-  // pulse（タップで跳ねる）
-  // consumeTap は “1回だけ”取り出す
-  const tap = (window.Input && Input.consumeTap) ? Input.consumeTap() : null;
-  if (tap) {
-    Atmos.pulse = 1.0;
-    // タップ位置に光の抜けを一瞬増やす（Render.bloomStamp / VoidShadow側に効かせる）
-    if (window.Render && typeof Render.bloomStamp === "function") {
-      Render.bloomStamp(tap.x, tap.y, (CFG.VOID_R || 130) * 0.25, 92);
+      this.reset();
     }
-  }
-  Atmos.pulse *= Math.pow(0.86, dtn);
 
-  // prayer（長押しで沈む）
-  const holdBoost = inp && inp.held ? 0.06 : 0.0;
-  Atmos.prayer = clamp(Atmos.prayer + (holdBoost - 0.012) * dtn, 0, 1);
-
-  // mood（触れ続けると温度が上がるが、祈りが強いと静かになる）
-  const targetMood = clamp((inp.intensity || 0) * 0.85 - Atmos.prayer * 0.45 + Atmos.pulse * 0.25, 0, 1);
-  Atmos.mood = lerp(Atmos.mood, targetMood, 0.08);
-
-  // --- FLOW FIELD 更新 ---
-  // mood/pulse/prayer で field 強度をゆっくり変える（直接CFGを書き換えず、フィールド側で使う）
-  // field.js は CFG.FLOW_STRENGTH を読むので、ここは一時的に乗算係数を持つ
-  field.step(dtn);
-
-  // --- RENDER begin ---
-  if (window.Render) {
-    Render.beginFrame();
-    Render.fade();
-    Render.drawBaseGradient();
-
-    // 紙感：毎フレーム大量に撒くと散らかるので、時々だけ
-    if ((frameCount % 28) === 0) Render.paperDust();
-  }
-
-  // 描画先（Renderがあるなら gBase、なければ canvas）
-  const gBase = (window.Render && Render.base) ? Render.base() : this.drawingContext;
-  const gLight = (window.Render && Render.light) ? Render.light() : null;
-
-  // --- VOID & SHADOW ---
-  // 祈りが強いほど影が深く、moodが高いほど空の抜けが明るい（ただし白飛びしない）
-  if (window.VoidShadow) {
-    // VoidShadow 自体は CFG と内部の breathe で動くので、
-    // 追加の“気配”は light stamp で補う
-    VoidShadow.step(dtn);
-    VoidShadow.draw(gBase, gLight);
-
-    // 祈りが強い時、Voidの周辺に“静かな色”を足す（紫/緑の気配）
-    if (window.Render && typeof Render.bloomStamp === "function") {
-      const c = VoidShadow.getCenter();
-      const rr = c.r * lerp(0.18, 0.30, Atmos.prayer);
-      const aa = lerp(28, 62, Atmos.prayer);
-      Render.bloomStamp(c.x, c.y, rr, aa);
+    reset() {
+      this.size = U.resizeCanvas(this.canvas);
+      this.P.seed(this.size.w, this.size.h);
+      this.t = U.now();
+      this.last = this.t;
+      Render.clear(this.ctx, this.size.w, this.size.h);
     }
-  }
 
-  // --- PARTICLES ---
-  if (window.Particles && field) {
-    // mode に応じて粒子へ渡す input.mode を変換
-    // calm: 引き寄せ弱 / pulse: 波紋強 / shear: 裂け（横方向のせん断）
-    const mode = inp.mode || "calm";
-    const ii = inp.intensity || 0;
+    step() {
+      const now = U.now();
+      let dt = (now - this.last) / 1000;
+      this.last = now;
+      dt = Math.min(dt, CFG.dtClamp);
 
-    // 入力を粒子に渡す（particles.js 側が down/held/mode を使う）
-    Particles.step(dtn, field, inp);
+      this.t = now;
 
-    // 粒子描画：Render.gBase は p5.Graphics
-    Particles.draw(gBase);
-  }
+      const w = this.size.w, h = this.size.h;
 
-  // --- Subtle “void openness” pulses ---
-  // 触れた時の「抜け」を明確にする（輪っかにならないよう、場所・半径を散らす）
-  if (window.Render && (inp.down || Atmos.pulse > 0.1)) {
-    const k = (inp.down ? 1.0 : Atmos.pulse);
-    const n = inp.down ? 2 : 1;
+      // update pointer velocity
+      if (this.pointer.down) {
+        const dx = this.pointer.x - this.pointer.lastX;
+        const dy = this.pointer.y - this.pointer.lastY;
+        this.pointer.vx = dx / Math.max(1, (now - this.pointer.downAt));
+        this.pointer.vy = dy / Math.max(1, (now - this.pointer.downAt));
+        this.pointer.lastX = this.pointer.x;
+        this.pointer.lastY = this.pointer.y;
 
-    for (let i = 0; i < n; i++) {
-      const ox = (random() - 0.5) * 24;
-      const oy = (random() - 0.5) * 24;
-      const rr = lerp(10, 44, k) * (0.9 + random() * 0.3);
-      const aa = lerp(18, 70, k) * (0.8 + random() * 0.25);
-      Render.bloomStamp(inp.x + ox, inp.y + oy, rr, aa);
+        // long press -> gentle “bloom”
+        const held = now - this.pointer.downAt;
+        if (!this.pointer.longFired && held > CFG.longPressMs) {
+          this.pointer.longFired = true;
+          this._bloom(this.pointer.x, this.pointer.y, 1.0);
+        }
+      }
+
+      // physics: flow + slight drift + touch force
+      const touch = this.pointer.down ? this.pointer : null;
+      const tx = touch ? touch.x : 0;
+      const ty = touch ? touch.y : 0;
+
+      for (let i = 0; i < this.P.n; i++) {
+        let x = this.P.x[i], y = this.P.y[i];
+
+        const v = this.field.vec(x, y);
+        const curl = CFG.curl;
+        const drift = CFG.drift;
+
+        let vx = this.P.vx[i];
+        let vy = this.P.vy[i];
+
+        // flow influence
+        vx = vx * 0.92 + v.x * curl * 22.0 * dt;
+        vy = vy * 0.92 + v.y * curl * 22.0 * dt;
+
+        // gentle gravity-like drift toward center (quiet pull)
+        const cx = w * 0.5, cy = h * 0.55;
+        const dxC = (cx - x), dyC = (cy - y);
+        vx += dxC * 0.0008 * drift;
+        vy += dyC * 0.0008 * drift;
+
+        // touch: repulse + swirl
+        if (touch) {
+          const dx = x - tx, dy = y - ty;
+          const d = Math.max(1, Math.hypot(dx, dy));
+          const R = CFG.touchRadius;
+
+          if (d < R) {
+            const k = (1 - d / R);
+            const fx = (dx / d) * k * CFG.touchForce * 85.0 * dt;
+            const fy = (dy / d) * k * CFG.touchForce * 85.0 * dt;
+
+            // swirl: rotate force
+            vx += fx + (-dy / d) * k * 55.0 * dt;
+            vy += fy + ( dx / d) * k * 55.0 * dt;
+
+            // brighten slightly when touched
+            this.P.a[i] = U.clamp(this.P.a[i] + k * 0.015, 0.06, 0.85);
+          }
+        }
+
+        // integrate
+        x += vx * dt;
+        y += vy * dt;
+
+        // wrap softly (no hard bounce)
+        if (x < -10) x = w + 10;
+        if (x > w + 10) x = -10;
+        if (y < -10) y = h + 10;
+        if (y > h + 10) y = -10;
+
+        this.P.x[i] = x;
+        this.P.y[i] = y;
+        this.P.vx[i] = vx;
+        this.P.vy[i] = vy;
+
+        // slow alpha relaxation
+        this.P.a[i] = U.lerp(this.P.a[i], 0.22, 0.005);
+      }
+
+      // render
+      Render.drawParticles(this.ctx, w, h, this.P);
+      Render.drawVeil(this.ctx, w, h, now);
+      drawVoid(this.ctx, w, h, now);
+
+      // tiny grain every few frames (cheap)
+      if ((now | 0) % 3 === 0) {
+        Render.drawGrain(this.ctx, w, h, CFG.grain);
+      }
+    }
+
+    _bloom(x, y, power = 1) {
+      const ctx = this.ctx;
+      const dpr = U.getDPR();
+      const w = this.size.w * dpr, h = this.size.h * dpr;
+
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+
+      const r0 = 0;
+      const r1 = Math.min(w, h) * (0.22 + power * 0.18);
+      const gx = x * dpr, gy = y * dpr;
+
+      const g = ctx.createRadialGradient(gx, gy, r0, gx, gy, r1);
+      g.addColorStop(0, "rgba(240,250,255,0.28)");
+      g.addColorStop(0.35, "rgba(240,250,255,0.12)");
+      g.addColorStop(1, "rgba(0,0,0,0)");
+
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+
+      U.toast("bloom");
     }
   }
 
-  // --- RENDER end ---
-  if (window.Render) {
-    Render.endFrame();
-  }
-}
-
-function windowResized() {
-  resizeCanvas(windowWidth, windowHeight);
-
-  if (window.Render) Render.resize(width, height);
-  if (field) field.resize(width, height);
-  if (window.Particles) Particles.resize(width, height);
-  if (window.VoidShadow) VoidShadow.resize(width, height);
-  if (window.Input) Input.resize(width, height);
-
-  // リサイズ直後は一回クリア＆描画して真っ黒事故を避ける
-  if (window.Render) {
-    Render.beginFrame();
-    Render.fade();
-    Render.drawBaseGradient();
-    Render.paperDust();
-    Render.endFrame();
-  }
-}
-
-// ------------------------------------------------------------
-// Minimal utils (このファイル単体で動くための保険)
-// 既に utils.js がある場合でも問題ないように、衝突しない名前にしてある
-// ------------------------------------------------------------
-function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
-function lerp(a, b, t) { return a + (b - a) * t; }
+  window.Sketch = Sketch;
+})();
