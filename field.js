@@ -1,55 +1,28 @@
 // field.js
-// 流れ場：大きな「光核」へ寄る / 触れで歪む
 (() => {
-  function Field(app) {
-    this.app = app;
-    this.t = 0;
-  }
+  "use strict";
 
-  Field.prototype.sample = function (x, y) {
-    // x,y: 0..1
-    const a = this.app;
-    const cx = a.light.x, cy = a.light.y;
-
-    // base noise angle
-    const n = U.fbm2(x * 2.0 + this.t * 0.12, y * 2.0 - this.t * 0.08, 4);
-    let ang = (n - 0.5) * Math.PI * 2 * CFG.FIELD_WARP;
-
-    // gentle pull towards core
-    const dx = cx - x;
-    const dy = cy - y;
-    const d = Math.sqrt(dx * dx + dy * dy) + 1e-6;
-    const pull = U.smoothstep(1.0, 0.0, d) * 0.85;
-    ang += Math.atan2(dy, dx) * pull;
-
-    // touch warp (swirl + pull)
-    if (a.touch.down) {
-      const tx = a.touch.x;
-      const ty = a.touch.y;
-      const ddx = tx - x;
-      const ddy = ty - y;
-      const td = Math.sqrt(ddx * ddx + ddy * ddy) + 1e-6;
-      const tr = CFG.TOUCH_RADIUS;
-      const w = U.smoothstep(tr, 0.0, td);
-
-      const swirl = CFG.TOUCH_SWIRL * w;
-      const pull2 = CFG.TOUCH_PULL * w;
-
-      // swirl around touch
-      ang += swirl * (Math.PI / 2);
-
-      // pull towards touch
-      ang = U.lerp(ang, Math.atan2(ddy, ddx), pull2 * 0.22);
+  class FlowField {
+    constructor(seed = 1) {
+      this.seed = seed >>> 0;
     }
 
-    const vx = Math.cos(ang);
-    const vy = Math.sin(ang);
-    return { vx, vy };
-  };
+    // returns angle in radians
+    angle(x, y) {
+      const ns = window.CFG.noiseScale;
+      const n1 = U.valueNoise2D(x * ns, y * ns, this.seed);
+      const n2 = U.valueNoise2D(x * ns * 1.9 + 10.0, y * ns * 1.9 - 7.0, this.seed ^ 0x9e3779b9);
+      const t = (n1 * 0.65 + n2 * 0.35);
+      return t * Math.PI * 2.0;
+    }
 
-  Field.prototype.step = function (dt) {
-    this.t += dt * CFG.FIELD_SPEED;
-  };
+    // curl-like vector (dx,dy)
+    vec(x, y) {
+      const a = this.angle(x, y);
+      const c = Math.cos(a), s = Math.sin(a);
+      return { x: c, y: s };
+    }
+  }
 
-  window.Field = Field;
+  window.FlowField = FlowField;
 })();
