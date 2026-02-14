@@ -1,69 +1,29 @@
 // void_shadow.js
-// 背景の「沈殿する黒」と、核の周りの陰影を作る
-
 const VoidShadow = (() => {
-  const draw = (ctx, w, h, corePx, t) => {
-    // base dark wash
-    ctx.save();
-    ctx.globalCompositeOperation = "source-over";
-    ctx.fillStyle = `rgb(${CFG.BG.r},${CFG.BG.g},${CFG.BG.b})`;
-    ctx.fillRect(0, 0, w, h);
+  const draw = (ctx, W, H, gather=0) => {
+    // vignette
+    const g = ctx.createRadialGradient(W*0.5, H*0.45, 0, W*0.5, H*0.45, Math.max(W,H)*0.72);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(0.65, `rgba(0,0,0,${0.10 + gather*0.08})`);
+    g.addColorStop(1.0, `rgba(0,0,0,${CFG.RENDER.vignette})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,W,H);
 
-    // subtle mottled fog
-    ctx.globalAlpha = 0.07;
-    const step = 90;
-    for (let y = -step; y < h + step; y += step) {
-      for (let x = -step; x < w + step; x += step) {
-        const n = U.fbm2((x + t * 40) * 0.0016, (y - t * 25) * 0.0016, 3, 2.0, 0.5);
-        const a = (n * 0.5 + 0.5);
-        const r = 120 + a * 120;
-        ctx.fillStyle = `rgba(255,255,255,${0.010 + a * 0.018})`;
-        ctx.beginPath();
-        ctx.arc(x + a * 12, y + a * 10, r, 0, U.TAU);
-        ctx.fill();
+    // subtle grain（軽量）
+    const a = CFG.RENDER.grain * (0.9 + gather*0.35);
+    ctx.globalAlpha = a;
+    ctx.globalCompositeOperation = "overlay";
+    const step = 2;
+    for (let y=0;y<H;y+=step){
+      for (let x=0;x<W;x+=step){
+        const v = (Math.random()*2-1)*0.10;
+        ctx.fillStyle = `rgba(255,255,255,${Math.max(0, v)})`;
+        ctx.fillRect(x,y,1,1);
       }
     }
     ctx.globalAlpha = 1;
-
-    // vignette
-    const vg = ctx.createRadialGradient(w * 0.5, h * 0.55, Math.min(w,h) * 0.12, w * 0.5, h * 0.55, Math.max(w,h) * 0.75);
-    vg.addColorStop(0.0, "rgba(0,0,0,0)");
-    vg.addColorStop(1.0, `rgba(0,0,0,${CFG.VIGNETTE})`);
-    ctx.fillStyle = vg;
-    ctx.fillRect(0, 0, w, h);
-
-    // core shadow bowl (gives "核が沈んでいる" depth)
-    const cx = corePx.x, cy = corePx.y;
-    const rr = Math.min(w,h) * 0.42;
-    const bowl = ctx.createRadialGradient(cx, cy, rr * 0.05, cx, cy, rr);
-    bowl.addColorStop(0.0, "rgba(0,0,0,0.0)");
-    bowl.addColorStop(0.55, "rgba(0,0,0,0.12)");
-    bowl.addColorStop(1.0, "rgba(0,0,0,0.42)");
-    ctx.fillStyle = bowl;
-    ctx.fillRect(0, 0, w, h);
-
-    ctx.restore();
+    ctx.globalCompositeOperation = "source-over";
   };
 
-  const grain = (ctx, w, h) => {
-    // cheap film grain
-    const g = CFG.GRAIN;
-    if (g <= 0) return;
-    ctx.save();
-    ctx.globalCompositeOperation = "overlay";
-    ctx.globalAlpha = g;
-
-    const n = 2200; // constant cost
-    for (let i = 0; i < n; i++) {
-      const x = Math.random() * w;
-      const y = Math.random() * h;
-      const a = Math.random() * 0.35;
-      const s = 0.6 + Math.random() * 1.6;
-      ctx.fillStyle = `rgba(255,255,255,${a})`;
-      ctx.fillRect(x, y, s, s);
-    }
-    ctx.restore();
-  };
-
-  return { draw, grain };
+  return { draw };
 })();
