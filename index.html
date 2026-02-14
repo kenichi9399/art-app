@@ -5,136 +5,117 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <meta name="color-scheme" content="dark" />
   <title>Touching Light — Quiet Luxury</title>
-
   <style>
     :root{
       --bg:#05070d;
-      --fg: rgba(240,245,255,.88);
-      --muted: rgba(240,245,255,.55);
-      --card: rgba(255,255,255,.06);
-      --border: rgba(255,255,255,.14);
-      --shadow: rgba(0,0,0,.55);
-      --ok: rgba(140,255,200,.85);
-      --warn: rgba(255,210,140,.85);
+      --fg:rgba(240,245,255,.88);
+      --muted:rgba(240,245,255,.55);
+      --card:rgba(255,255,255,.06);
+      --border:rgba(255,255,255,.14);
+      --shadow:rgba(0,0,0,.55);
+      --ok:rgba(140,255,200,.85);
+      --warn:rgba(255,210,140,.85);
     }
-    html,body{
-      margin:0; padding:0; height:100%;
-      background: var(--bg);
-      overflow:hidden;
+    html,body{margin:0;padding:0;height:100%;background:var(--bg);overflow:hidden;}
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans JP","Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;
       -webkit-user-select:none; user-select:none;
       -webkit-touch-callout:none;
-      -webkit-tap-highlight-color: transparent;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+      -webkit-tap-highlight-color:transparent;
     }
-    canvas{
-      display:block;
-      width:100vw; height:100vh;
-      touch-action:none;
-    }
+    canvas{display:block;width:100vw;height:100vh;touch-action:none;}
     .hud{
-      position:fixed;
-      left:12px; top:12px;
-      display:flex; gap:8px; align-items:center;
-      z-index:10;
-      padding:10px 12px;
-      border-radius:14px;
-      background: rgba(10,12,18,.28);
-      border: 1px solid rgba(255,255,255,.10);
+      position:fixed; left:12px; right:12px; top:12px;
+      display:flex; gap:10px; align-items:flex-start; justify-content:space-between;
+      pointer-events:none;
+    }
+    .panel{
+      pointer-events:auto;
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
-      color: var(--fg);
-      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      background: var(--card);
+      border:1px solid var(--border);
+      box-shadow:0 10px 30px var(--shadow);
+      border-radius:14px;
+      padding:10px 12px;
+      max-width: 76vw;
     }
-    .dot{ width:8px; height:8px; border-radius:50%; background: var(--ok); box-shadow: 0 0 18px rgba(140,255,200,.55); }
-    .title{ font-size:12px; letter-spacing:.02em; }
-    .sub{ font-size:11px; color: var(--muted); margin-top:2px; }
-    .stack{ display:flex; flex-direction:column; line-height:1.2; }
-    .btn{
-      margin-left:6px;
-      font-size:11px;
-      color: var(--fg);
-      border: 1px solid rgba(255,255,255,.14);
-      background: rgba(255,255,255,.06);
-      padding:7px 10px;
+    .title{font-size:13px;color:var(--fg);letter-spacing:.02em; margin:0 0 6px 0;}
+    .hint{font-size:12px;color:var(--muted);line-height:1.35;}
+    .row{display:flex; gap:8px; align-items:center; justify-content:flex-end;}
+    button{
+      pointer-events:auto;
+      appearance:none; -webkit-appearance:none;
       border-radius:12px;
-      cursor:pointer;
-    }
-    .btn:active{ transform: translateY(1px); }
-    .toast{
-      position:fixed;
-      left:50%; bottom:18px;
-      transform:translateX(-50%);
+      border:1px solid var(--border);
+      background:rgba(255,255,255,.08);
+      color:var(--fg);
       padding:10px 12px;
-      border-radius:14px;
-      background: rgba(10,12,18,.38);
-      border: 1px solid rgba(255,255,255,.10);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      color: var(--fg);
+      font-size:13px;
+      line-height:1;
+    }
+    button:active{transform: translateY(1px);}
+    .toast{
+      position:fixed; left:50%; bottom:18px; transform:translateX(-50%);
+      pointer-events:none;
+      background:rgba(0,0,0,.55);
+      border:1px solid rgba(255,255,255,.12);
+      color:var(--fg);
+      padding:10px 14px;
+      border-radius:999px;
       font-size:12px;
       opacity:0;
-      pointer-events:none;
-      transition: opacity .25s ease;
-      z-index:10;
+      transition:opacity .22s ease;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
     }
-    .toast.show{ opacity:1; }
+    .toast.show{opacity:1;}
     .err{
-      position:fixed; inset:0;
-      display:none;
-      align-items:flex-start; justify-content:center;
-      padding:16px;
-      background: rgba(0,0,0,.55);
-      z-index:9999;
-    }
-    .err .panel{
-      width:min(720px, 96vw);
-      background: rgba(20,22,28,.92);
-      border:1px solid rgba(255,255,255,.12);
-      border-radius:16px;
-      padding:14px 14px;
-      color: var(--fg);
-      box-shadow: 0 18px 60px rgba(0,0,0,.55);
-    }
-    .err .h{ font-weight:700; margin-bottom:8px; }
-    .err pre{
-      margin:0;
-      white-space:pre-wrap;
-      word-break:break-word;
+      position:fixed; left:12px; right:12px; bottom:12px;
+      pointer-events:auto;
+      background:rgba(30,10,10,.75);
+      border:1px solid rgba(255,160,160,.28);
+      color:rgba(255,235,235,.92);
+      padding:12px 12px;
+      border-radius:14px;
       font-size:12px;
-      color: rgba(240,245,255,.8);
+      display:none;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow:0 10px 30px var(--shadow);
+      white-space:pre-wrap;
     }
+    .err b{color:rgba(255,210,210,.95);}
   </style>
 </head>
-
 <body>
-  <canvas id="c"></canvas>
+  <canvas id="c" aria-label="generative canvas"></canvas>
 
   <div class="hud">
-    <div class="dot"></div>
-    <div class="stack">
-      <div class="title">Touching Light — Quiet Luxury</div>
-      <div class="sub">tap / drag / long-press</div>
-    </div>
-    <button class="btn" id="btnShot">保存</button>
-  </div>
-
-  <div class="toast" id="toast">Saved</div>
-
-  <div class="err" id="err">
     <div class="panel">
-      <div class="h">JavaScript error</div>
-      <pre id="errText"></pre>
+      <p class="title">Touching Light — Quiet Luxury</p>
+      <div class="hint">
+        tap / drag / long-press<br/>
+        静かな粒子と光の膜が、触れ方で変わります
+      </div>
+    </div>
+    <div class="row">
+      <button id="btnSave" type="button">保存</button>
+      <button id="btnReset" type="button">Reset</button>
     </div>
   </div>
 
-  <!-- 読み込み順：CFG → Utils → 背景 → 物理/粒子 → レンダ → 入力 → メイン -->
+  <div id="toast" class="toast">Saved</div>
+  <div id="err" class="err"><b>JavaScript error</b>\n</div>
+
+  <!-- 読み込み順が超重要 -->
   <script src="./cfg.js"></script>
   <script src="./utils.js"></script>
-  <script src="./void_shadow.js"></script>
-  <script src="./field.js"></script>
   <script src="./particles.js"></script>
+  <script src="./field.js"></script>
+  <script src="./void_shadow.js"></script>
   <script src="./render.js"></script>
-  <script src="./input.js"></script>
   <script src="./sketch.js"></script>
+  <script src="./input.js"></script>
 </body>
 </html>
