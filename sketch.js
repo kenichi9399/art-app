@@ -1,168 +1,139 @@
 // sketch.js
-(() => {
-  "use strict";
 
-  class Sketch {
-    constructor(canvas, ctx) {
-      this.canvas = canvas;
-      this.ctx = ctx;
+(function(){
+  const toastEl = document.getElementById("toast");
+  const toastBox = toastEl?.querySelector("div");
 
-      this.size = { w: 0, h: 0, dpr: 1, cw: 0, ch: 0 };
-      this.P = new Particles(CFG.N);
-
-      this.seed = (Math.random() * 1e9) >>> 0;
-      this.field = new FlowField(this.seed);
-
-      this.t = 0;
-      this.last = U.now();
-
-      // interaction state
-      this.pointer = {
-        down: false,
-        x: 0, y: 0,
-        vx: 0, vy: 0,
-        lastX: 0, lastY: 0,
-        downAt: 0,
-        longFired: false
-      };
-
-      this.reset();
-    }
-
-    reset() {
-      this.size = U.resizeCanvas(this.canvas);
-      this.P.seed(this.size.w, this.size.h);
-      this.t = U.now();
-      this.last = this.t;
-      Render.clear(this.ctx, this.size.w, this.size.h);
-    }
-
-    step() {
-      const now = U.now();
-      let dt = (now - this.last) / 1000;
-      this.last = now;
-      dt = Math.min(dt, CFG.dtClamp);
-
-      this.t = now;
-
-      const w = this.size.w, h = this.size.h;
-
-      // update pointer velocity
-      if (this.pointer.down) {
-        const dx = this.pointer.x - this.pointer.lastX;
-        const dy = this.pointer.y - this.pointer.lastY;
-        this.pointer.vx = dx / Math.max(1, (now - this.pointer.downAt));
-        this.pointer.vy = dy / Math.max(1, (now - this.pointer.downAt));
-        this.pointer.lastX = this.pointer.x;
-        this.pointer.lastY = this.pointer.y;
-
-        // long press -> gentle “bloom”
-        const held = now - this.pointer.downAt;
-        if (!this.pointer.longFired && held > CFG.longPressMs) {
-          this.pointer.longFired = true;
-          this._bloom(this.pointer.x, this.pointer.y, 1.0);
-        }
-      }
-
-      // physics: flow + slight drift + touch force
-      const touch = this.pointer.down ? this.pointer : null;
-      const tx = touch ? touch.x : 0;
-      const ty = touch ? touch.y : 0;
-
-      for (let i = 0; i < this.P.n; i++) {
-        let x = this.P.x[i], y = this.P.y[i];
-
-        const v = this.field.vec(x, y);
-        const curl = CFG.curl;
-        const drift = CFG.drift;
-
-        let vx = this.P.vx[i];
-        let vy = this.P.vy[i];
-
-        // flow influence
-        vx = vx * 0.92 + v.x * curl * 22.0 * dt;
-        vy = vy * 0.92 + v.y * curl * 22.0 * dt;
-
-        // gentle gravity-like drift toward center (quiet pull)
-        const cx = w * 0.5, cy = h * 0.55;
-        const dxC = (cx - x), dyC = (cy - y);
-        vx += dxC * 0.0008 * drift;
-        vy += dyC * 0.0008 * drift;
-
-        // touch: repulse + swirl
-        if (touch) {
-          const dx = x - tx, dy = y - ty;
-          const d = Math.max(1, Math.hypot(dx, dy));
-          const R = CFG.touchRadius;
-
-          if (d < R) {
-            const k = (1 - d / R);
-            const fx = (dx / d) * k * CFG.touchForce * 85.0 * dt;
-            const fy = (dy / d) * k * CFG.touchForce * 85.0 * dt;
-
-            // swirl: rotate force
-            vx += fx + (-dy / d) * k * 55.0 * dt;
-            vy += fy + ( dx / d) * k * 55.0 * dt;
-
-            // brighten slightly when touched
-            this.P.a[i] = U.clamp(this.P.a[i] + k * 0.015, 0.06, 0.85);
-          }
-        }
-
-        // integrate
-        x += vx * dt;
-        y += vy * dt;
-
-        // wrap softly (no hard bounce)
-        if (x < -10) x = w + 10;
-        if (x > w + 10) x = -10;
-        if (y < -10) y = h + 10;
-        if (y > h + 10) y = -10;
-
-        this.P.x[i] = x;
-        this.P.y[i] = y;
-        this.P.vx[i] = vx;
-        this.P.vy[i] = vy;
-
-        // slow alpha relaxation
-        this.P.a[i] = U.lerp(this.P.a[i], 0.22, 0.005);
-      }
-
-      // render
-      Render.drawParticles(this.ctx, w, h, this.P);
-      Render.drawVeil(this.ctx, w, h, now);
-      drawVoid(this.ctx, w, h, now);
-
-      // tiny grain every few frames (cheap)
-      if ((now | 0) % 3 === 0) {
-        Render.drawGrain(this.ctx, w, h, CFG.grain);
-      }
-    }
-
-    _bloom(x, y, power = 1) {
-      const ctx = this.ctx;
-      const dpr = U.getDPR();
-      const w = this.size.w * dpr, h = this.size.h * dpr;
-
-      ctx.save();
-      ctx.globalCompositeOperation = "screen";
-
-      const r0 = 0;
-      const r1 = Math.min(w, h) * (0.22 + power * 0.18);
-      const gx = x * dpr, gy = y * dpr;
-
-      const g = ctx.createRadialGradient(gx, gy, r0, gx, gy, r1);
-      g.addColorStop(0, "rgba(240,250,255,0.28)");
-      g.addColorStop(0.35, "rgba(240,250,255,0.12)");
-      g.addColorStop(1, "rgba(0,0,0,0)");
-
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, w, h);
-      ctx.restore();
-
-      U.toast("bloom");
-    }
+  function toast(msg, ms=1200){
+    if(!toastEl || !toastBox) return;
+    toastBox.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(()=>toastEl.classList.remove("show"), ms);
   }
 
-  window.Sketch = Sketch;
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d", { alpha:false, desynchronized:true });
+
+  let w=0,h=0,pd=1;
+
+  const particles = new Particles();
+  const renderer = new Renderer(ctx);
+  const input = new Input(canvas);
+
+  let t = 0;
+  let last = performance.now();
+  let avgMs = 16.6;
+
+  function resize(){
+    const r = canvas.getBoundingClientRect();
+    pd = Math.min(CFG.PD_MAX, window.devicePixelRatio || 1);
+
+    // iOSで極端に重い場合の保険
+    if(r.width*r.height > 1300*900 && pd > 1.5) pd = 1.5;
+
+    canvas.width  = Math.floor(r.width * pd);
+    canvas.height = Math.floor(r.height * pd);
+
+    w = canvas.width;
+    h = canvas.height;
+
+    renderer.resize(w,h);
+    particles.reset(w,h);
+
+    ctx.fillStyle = CFG.BG;
+    ctx.fillRect(0,0,w,h);
+
+    toast("resized");
+  }
+
+  function hardReset(){
+    // 画面を完全に初期化
+    particles.scale = 1.0;
+    particles.reset(w,h);
+
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = CFG.BG;
+    ctx.fillRect(0,0,w,h);
+
+    toast("Reset");
+  }
+
+  function saveImage(){
+    // iOS Safari：ダウンロード挙動が難しいので share を優先、無ければ dataURL を開く
+    canvas.toBlob(async (blob)=>{
+      if(!blob){ toast("保存に失敗"); return; }
+
+      const file = new File([blob], "touching-light.png", { type:"image/png" });
+
+      // 共有が使えるならそれが一番安定
+      if(navigator.canShare && navigator.canShare({ files:[file] })){
+        try{
+          await navigator.share({ files:[file], title:"Touching Light" });
+          toast("共有しました");
+          return;
+        }catch(_){}
+      }
+
+      // fallback: 画像を新規タブで開く（そこから保存）
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "touching-light.png";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+
+      toast("保存しました");
+    }, "image/png");
+  }
+
+  input.onReset = hardReset;
+  input.onSave  = saveImage;
+
+  function adaptPerformance(ms){
+    // 粒子数を少しずつ調整
+    avgMs = avgMs * 0.92 + ms * 0.08;
+    const target = CFG.PERF.TARGET_MS;
+
+    const err = (avgMs - target) / target; // +:重い
+    const k = CFG.PERF.ADAPT_RATE;
+
+    particles.scale *= (1 - err * k);
+    particles.scale = window.U.clamp(particles.scale, CFG.PERF.MIN_SCALE, CFG.PERF.MAX_SCALE);
+  }
+
+  function loop(now){
+    const ms = now - last;
+    last = now;
+
+    // dt はfps基準で 1/60=0.0166
+    const dt = Math.min(0.05, ms/1000);
+    t += dt;
+
+    input.update(dt);
+
+    // touch情報を粒子へ
+    particles.setTouch(input.x, input.y, input.down, input.press, input.vx, input.vy);
+
+    // 更新
+    particles.step(w, h, t, dt);
+
+    // 描画
+    renderer.clear();
+    renderer.draw(particles);
+
+    // 影・グレインなど
+    VoidShadow.apply(ctx, w, h);
+
+    adaptPerformance(ms);
+
+    requestAnimationFrame(loop);
+  }
+
+  // 初期化
+  window.addEventListener("resize", resize);
+  resize();
+  requestAnimationFrame(loop);
 })();
