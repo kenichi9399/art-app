@@ -1,133 +1,188 @@
 // particles.js
 
-(function(){
-  const { rand, clamp } = window.U;
+const Particles = (() => {
+  let P = [];
+  let D = [];
 
-  function pickSize(){
-    const r = Math.random();
-    const S = CFG.SIZE;
+  const makeOne = (type, core) => {
+    // distribution: more density near core, but not only
+    const near = Math.random() < 0.62;
+    let x, y;
 
-    if(r < S.RATIO_SMALL){
-      // 小：多い。少し偏り（小さめが多い）
-      const t = Math.pow(Math.random(), 1.8);
-      return S.SMALL_MIN + (S.SMALL_MAX - S.SMALL_MIN) * t;
+    if (near) {
+      const a = Math.random() * U.TAU;
+      const r = Math.pow(Math.random(), 1.8) * 0.22; // tighter near core
+      x = core.x + Math.cos(a) * r;
+      y = core.y + Math.sin(a) * r;
+    } else {
+      x = Math.random();
+      y = Math.random();
     }
-    if(r < S.RATIO_SMALL + S.RATIO_MID){
-      // 中：ほどほど
-      const t = Math.pow(Math.random(), 1.2);
-      return S.MID_MIN + (S.MID_MAX - S.MID_MIN) * t;
-    }
-    // 大：レア（光の粒の“核”になりやすい）
-    const t = Math.pow(Math.random(), 0.85);
-    return S.BIG_MIN + (S.BIG_MAX - S.BIG_MIN) * t;
-  }
 
-  function Particles(){
-    this.p = [];
-    this.scale = 1.0; // 自動調整用
-    this.touch = {x:0,y:0,down:false,press:0, vx:0, vy:0};
-  }
+    x = U.clamp(x, 0, 1);
+    y = U.clamp(y, 0, 1);
 
-  Particles.prototype.reset = function(w, h){
-    this.p.length = 0;
+    const v = U.randn() * 0.002;
+    const w = U.randn() * 0.002;
 
-    // 端末負荷に合わせて個数調整
-    const n = Math.floor(clamp(CFG.N_BASE * this.scale, CFG.N_MIN, CFG.N_MAX));
+    if (type === "P") {
+      const big = Math.random() < CFG.P.rBigChance;
+      const r = big
+        ? U.rand(CFG.P.rBigMax, CFG.P.rBigMin)
+        : U.rand(CFG.P.rMax, CFG.P.rMin);
 
-    for(let i=0;i<n;i++){
-      const s = pickSize();
-      this.p.push({
-        x: Math.random()*w,
-        y: Math.random()*h,
-        vx: 0,
-        vy: 0,
-        r: s,
-        a: 0.35 + Math.random()*0.65, // 個体差
-        life: Math.random()
-      });
+      const a = U.rand(CFG.P.alphaMax, CFG.P.alphaMin);
+      return {
+        x, y, vx: v, vy: w,
+        r, a,
+        tw: Math.random() * 1000,
+        sp: Math.random(),
+      };
+    } else {
+      const r = U.rand(CFG.DUST.rMax, CFG.DUST.rMin);
+      const a = U.rand(CFG.DUST.alphaMax, CFG.DUST.alphaMin);
+      return {
+        x, y, vx: v * 0.7, vy: w * 0.7,
+        r, a,
+        tw: Math.random() * 1000,
+      };
     }
   };
 
-  Particles.prototype.setTouch = function(x, y, down, press, vx, vy){
-    this.touch.x = x; this.touch.y = y;
-    this.touch.down = !!down;
-    this.touch.press = press || 0;
-    this.touch.vx = vx || 0;
-    this.touch.vy = vy || 0;
+  const init = (core, countP, countD) => {
+    P = [];
+    D = [];
+    for (let i = 0; i < countP; i++) P.push(makeOne("P", core));
+    for (let i = 0; i < countD; i++) D.push(makeOne("D", core));
   };
 
-  Particles.prototype.step = function(w, h, t, dt){
-    const M = CFG.MOTION;
-    const T = CFG.TOUCH;
-    const WR = M.WRAP_MARGIN;
+  const stepOne = (p, dt, core, input) => {
+    // flow
+    const f = Field.sample(p.x, p.y, dt * 0.35, core);
 
-    const sub = Math.max(1, M.SUBSTEPS|0);
-    const sdt = dt / sub;
+    // jitter (tiny)
+    const jx = (U.randn() * CFG.P.jitter) * dt;
+    const jy = (U.randn() * CFG.P.jitter) * dt;
 
-    for(let k=0;k<sub;k++){
-      for(let i=0;i<this.p.length;i++){
-        const o = this.p[i];
+    let ax = f.x + jx;
+    let ay = f.y + jy;
 
-        // フィールド
-        const f = Field.sample(o.x, o.y, t);
-        let ax = f[0] * M.SPEED;
-        let ay = f[1] * M.SPEED;
+    // interaction
+    if (input.down) {
+      const dx = p.x - input.x;
+      const dy = p.y - input.y;
+      const d = Math.sqrt(dx * dx + dy * dy) + 1e-6;
+      const R = CFG.INPUT.influenceRadius / Math.max(1, _w); // normalized via _w set in resize
+      const k = U.clamp(1 - d / R, 0, 1);
 
-        // 微細揺らぎ（粒を“生かす”）
-        ax += (Math.random()*2-1) * M.JITTER;
-        ay += (Math.random()*2-1) * M.JITTER;
+      if (k > 0) {
+        const n = { x: dx / d, y: dy / d };
 
-        // タッチ：引き + 渦（長押しで増）
-        if(this.touch.down){
-          const dx = this.touch.x - o.x;
-          const dy = this.touch.y - o.y;
-          const d2 = dx*dx + dy*dy;
-          const rr = T.RADIUS * T.RADIUS;
+        // pull towards touch (soft)
+        const pull = -CFG.INPUT.pull * k;
 
-          if(d2 < rr){
-            const d = Math.sqrt(d2) || 1;
-            const ndx = dx / d;
-            const ndy = dy / d;
+        // swirl around touch
+        const sw = CFG.INPUT.swirl * k;
+        const sx = -n.y * sw;
+        const sy = n.x * sw;
 
-            const pBoost = 1 + this.touch.press * (T.PRESS_BOOST - 1);
-            const fall = 1 - (d / T.RADIUS);
-            const wgt = fall * fall;
+        // brush along finger velocity
+        const bx = input.vx * CFG.INPUT.brush * k * 8.0;
+        const by = input.vy * CFG.INPUT.brush * k * 8.0;
 
-            // 引力
-            ax += ndx * T.PULL * wgt * pBoost;
-            ay += ndy * T.PULL * wgt * pBoost;
+        // long-press: compress into a denser "膜"
+        const lp = input.longPress ? (0.45 * k) : 0;
 
-            // 渦（接線方向）
-            ax += (-ndy) * T.SWIRL * wgt * pBoost;
-            ay += ( ndx) * T.SWIRL * wgt * pBoost;
-
-            // タッチの“移動”も少し反映（ドラッグのニュアンス）
-            ax += this.touch.vx * 0.0035 * wgt;
-            ay += this.touch.vy * 0.0035 * wgt;
-          }
-        }
-
-        // 加速度→速度
-        o.vx = (o.vx + ax) * M.DAMP;
-        o.vy = (o.vy + ay) * M.DAMP;
-
-        // 速度にサイズ依存（小さいほど軽く揺れる）
-        const mass = 0.55 + o.r * 0.25;
-        o.x += (o.vx / mass) * (sdt * 60);
-        o.y += (o.vy / mass) * (sdt * 60);
-
-        // ラップ（端を抜けても連続感）
-        if(o.x < -WR) o.x = w + WR;
-        else if(o.x > w + WR) o.x = -WR;
-
-        if(o.y < -WR) o.y = h + WR;
-        else if(o.y > h + WR) o.y = -WR;
-
-        o.life += 0.002 + Math.random()*0.002;
-        if(o.life > 1) o.life -= 1;
+        ax += n.x * pull + sx + bx - n.x * lp;
+        ay += n.y * pull + sy + by - n.y * lp;
       }
     }
+
+    // integrate
+    p.vx += ax * dt;
+    p.vy += ay * dt;
+
+    // clamp velocity
+    const vm = CFG.P.vMax;
+    const vv = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+    if (vv > vm) {
+      p.vx = (p.vx / vv) * vm;
+      p.vy = (p.vy / vv) * vm;
+    }
+
+    p.vx *= Math.pow(CFG.P.damping, dt * 60);
+    p.vy *= Math.pow(CFG.P.damping, dt * 60);
+
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+
+    // wrap gently (to keep density)
+    if (p.x < -0.02) p.x = 1.02;
+    if (p.x > 1.02) p.x = -0.02;
+    if (p.y < -0.02) p.y = 1.02;
+    if (p.y > 1.02) p.y = -0.02;
+
+    // sparkle
+    p.tw += dt * (0.8 + p.sp * 1.2);
   };
 
-  window.Particles = Particles;
+  const stepDust = (p, dt, core, input) => {
+    const f = Field.sample(p.x, p.y, dt * 0.22, core);
+
+    let ax = f.x * 0.55;
+    let ay = f.y * 0.55;
+
+    if (input.down) {
+      const dx = p.x - input.x;
+      const dy = p.y - input.y;
+      const d = Math.sqrt(dx * dx + dy * dy) + 1e-6;
+      const R = (CFG.INPUT.influenceRadius * 0.85) / Math.max(1, _w);
+      const k = U.clamp(1 - d / R, 0, 1);
+      if (k > 0) {
+        const n = { x: dx / d, y: dy / d };
+        const sw = 0.75 * k;
+        ax += (-n.y * sw) + input.vx * 4.5 * k;
+        ay += ( n.x * sw) + input.vy * 4.5 * k;
+      }
+    }
+
+    p.vx += ax * dt;
+    p.vy += ay * dt;
+
+    const vm = CFG.DUST.vMax;
+    const vv = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+    if (vv > vm) {
+      p.vx = (p.vx / vv) * vm;
+      p.vy = (p.vy / vv) * vm;
+    }
+
+    p.vx *= Math.pow(CFG.DUST.damping, dt * 60);
+    p.vy *= Math.pow(CFG.DUST.damping, dt * 60);
+
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+
+    if (p.x < -0.02) p.x = 1.02;
+    if (p.x > 1.02) p.x = -0.02;
+    if (p.y < -0.02) p.y = 1.02;
+    if (p.y > 1.02) p.y = -0.02;
+
+    p.tw += dt * 0.65;
+  };
+
+  // width/height normalized helpers set by Render.resize() (global-ish)
+  let _w = 1000;
+
+  const setNormScale = (w) => { _w = w; };
+
+  const step = (dt, core, input) => {
+    for (let i = 0; i < P.length; i++) stepOne(P[i], dt, core, input);
+    for (let i = 0; i < D.length; i++) stepDust(D[i], dt, core, input);
+  };
+
+  const data = () => ({ P, D });
+
+  const reset = (core, countP, countD) => init(core, countP, countD);
+
+  return { init, step, data, reset, setNormScale };
 })();
