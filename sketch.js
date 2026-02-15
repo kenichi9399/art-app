@@ -1,255 +1,206 @@
 // sketch.js
 (() => {
+  "use strict";
+
   const U = window.U;
   const CFG = window.CFG;
   const INPUT = window.INPUT;
+  const FIELD = window.FIELD;
+  const PARTICLES = window.PARTICLES;
+  const VOID = window.VOID;
+  const RENDER = window.RENDER;
 
-  const canvas = document.getElementById("c");
-  const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+  let canvas = null;
+  let ctx = null;
+  let rafId = 0;
 
-  const P = new window.Particles();
-  const field = new window.Field();
-  const voidShadow = new window.VoidShadow();
-  const R = new window.Renderer();
+  // --- Core（核）制御：2〜3個→ゆっくり合体→1つへ ---
+  const CORE = (window.CORE = {
+    cores: [],
+    t: 0,
+    reset() {
+      this.t = 0;
+      this.cores = [];
 
-  let W = 0, H = 0;
-  let lastT = U.now();
+      // 2〜3個を初期配置（中央付近に“ゆっくり近づく”）
+      const n = 2 + ((Math.random() * 1.999) | 0); // 2 or 3
+      const cx = canvas.width * (0.5 + (Math.random() - 0.5) * 0.10);
+      const cy = canvas.height * (0.55 + (Math.random() - 0.5) * 0.12);
 
-  // 2〜3個の核 → 合体して1つへ
-  const cores = [];
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + Math.random() * 0.6;
+        const r = Math.min(canvas.width, canvas.height) * (0.08 + Math.random() * 0.06);
+        this.cores.push({
+          p: U.v2(cx + Math.cos(a) * r, cy + Math.sin(a) * r),
+          v: U.v2((Math.random() - 0.5) * 0.2, (Math.random() - 0.5) * 0.2),
+          m: 1.0,
+          alive: true,
+        });
+      }
+    },
+    tick(dt) {
+      this.t += dt;
 
-  function resetCores() {
-    cores.length = 0;
-    const n = CFG.CORE_COUNT_INIT;
-    for (let i = 0; i < n; i++) {
-      cores.push({
-        x: W * (0.40 + 0.20 * Math.random()),
-        y: H * (0.34 + 0.25 * Math.random()),
-        vx: U.randf(-0.15, 0.15),
-        vy: U.randf(-0.15, 0.15),
-        radius: U.randf(10, 18),
-        mass: U.randf(0.9, 1.2),
-        energy: 0.0,
+      // 中心（合体点）をゆっくり漂わせる
+      const base = U.v2(
+        canvas.width * 0.5 + Math.cos(this.t * 0.00012) * canvas.width * 0.06,
+        canvas.height * 0.55 + Math.sin(this.t * 0.00010) * canvas.height * 0.07
+      );
+
+      // coresが2〜3個ある間、ゆっくり近づける
+      for (const c of this.cores) {
+        if (!c.alive) continue;
+        const to = U.v2(base.x - c.p.x, base.y - c.p.y);
+        c.v = U.v2(
+          (c.v.x + to.x * 0.000035) * 0.985,
+          (c.v.y + to.y * 0.000035) * 0.985
+        );
+        c.p = U.v2(c.p.x + c.v.x * dt, c.p.y + c.v.y * dt);
+
+        // 端に逃げない保険
+        c.p.x = Math.max(0, Math.min(canvas.width, c.p.x));
+        c.p.y = Math.max(0, Math.min(canvas.height, c.p.y));
+      }
+
+      // 合体：距離が近いものから吸収
+      if (this.cores.length >= 2) {
+        for (let i = 0; i < this.cores.length; i++) {
+          const a = this.cores[i];
+          if (!a.alive) continue;
+          for (let j = i + 1; j < this.cores.length; j++) {
+            const b = this.cores[j];
+            if (!b.alive) continue;
+            const dx = a.p.x - b.p.x;
+            const dy = a.p.y - b.p.y;
+            const d2 = dx * dx + dy * dy;
+            const th = Math.min(canvas.width, canvas.height) * 0.030;
+            if (d2 < th * th) {
+              // b を a に吸収
+              a.m += b.m;
+              a.p = U.v2((a.p.x + b.p.x) * 0.5, (a.p.y + b.p.y) * 0.5);
+              b.alive = false;
+            }
+          }
+        }
+        this.cores = this.cores.filter(c => c.alive);
+      }
+
+      // 1つになった後も、粒子量で形が“わずかに変形”するイメージ（後で粒子側に渡す）
+    },
+    getMain() {
+      if (!this.cores.length) return { p: U.v2(canvas.width * 0.5, canvas.height * 0.55), m: 1 };
+      // いちばん質量が大きいものを核として扱う
+      let best = this.cores[0];
+      for (const c of this.cores) if (c.m > best.m) best = c;
+      return best;
+    },
+  });
+
+  function bindUI() {
+    const btn = document.getElementById("btnReset");
+    if (btn) {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        resetAll();
       });
     }
   }
 
   function resize() {
-    W = window.innerWidth;
-    H = window.innerHeight;
-    const dpr = Math.min(CFG.DPR_CAP, window.devicePixelRatio || 1);
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1)); // iPhoneで暴れにくい
+    const w = Math.floor(window.innerWidth);
+    const h = Math.floor(window.innerHeight);
 
-    canvas.width = Math.floor(W * dpr);
-    canvas.height = Math.floor(H * dpr);
-    canvas.style.width = W + "px";
-    canvas.style.height = H + "px";
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
 
+    // ctxは“論理座標で描く”ためにscale
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    field.resize(W, H);
-    voidShadow.resize(W, H);
+    // 各モジュールへ通知
+    FIELD.resize?.(w, h);
+    PARTICLES.resize?.(w, h);
+    VOID.resize?.(w, h);
+    RENDER.resize?.(w, h);
 
-    P.seed();
-    resetCores();
+    // CORE も canvas論理サイズに合わせる（canvas.widthではなく w/h を基準にしたい）
+    // ※COREはcanvasの実ピクセルでなく論理ピクセルで扱うため、ここでは styleサイズ(w,h)でOK
   }
 
-  // 入力を確実に有効化
-  INPUT.attach(canvas);
+  function resetAll() {
+    const w = Math.floor(window.innerWidth);
+    const h = Math.floor(window.innerHeight);
 
-  // Resetボタン
-  document.getElementById("btnReset").addEventListener("click", () => {
-    field.reset();
-    P.reset();
-    resetCores();
-  }, { passive: true });
+    FIELD.reset?.(w, h);
+    PARTICLES.reset?.(w, h);
+    VOID.reset?.(w, h);
+    CORE.reset();
 
-  window.addEventListener("resize", resize);
-  resize();
-
-  function mergeCores() {
-    for (let i = cores.length - 1; i >= 0; i--) {
-      for (let j = i - 1; j >= 0; j--) {
-        const a = cores[i], b = cores[j];
-        const dx = a.x - b.x;
-        const dy = a.y - b.y;
-        const d = Math.hypot(dx, dy);
-
-        if (d < CFG.CORE_MERGE_DIST) {
-          const m1 = a.mass, m2 = b.mass;
-          const m = m1 + m2;
-
-          b.x = (a.x*m1 + b.x*m2) / m;
-          b.y = (a.y*m1 + b.y*m2) / m;
-          b.vx = (a.vx*m1 + b.vx*m2) / m;
-          b.vy = (a.vy*m1 + b.vy*m2) / m;
-
-          b.mass = m;
-          b.radius = Math.min(28, b.radius + a.radius * 0.38);
-          b.energy = Math.max(b.energy, a.energy) + 0.12;
-
-          cores.splice(i, 1);
-          break;
-        }
-      }
+    // タップ残りを掃除（「タップしても変化しない」原因の保険）
+    if (INPUT) {
+      INPUT.consumeTap?.();
+      INPUT.down = false;
+      INPUT.dragging = false;
+      INPUT.longPress = false;
     }
   }
 
-  // ✅ タップを「確実に視覚変化」に変換する（白飛びしない範囲）
-  function applyTapImpulse() {
-    if (INPUT.tapImpulse !== 1) return;
+  function step(now) {
+    rafId = requestAnimationFrame(step);
 
-    const tx = INPUT.tapPos.x;
-    const ty = INPUT.tapPos.y;
+    const w = Math.floor(window.innerWidth);
+    const h = Math.floor(window.innerHeight);
 
-    // 1) 核に「息」：近い核ほどエネルギーが少し上がる
-    for (const c of cores) {
-      const d = Math.hypot(c.x - tx, c.y - ty);
-      const k = Math.exp(-d * 0.02); // 近いほど強い
-      c.energy = U.clamp(c.energy + k * 0.35, 0, 1);
-      c.vx += (c.x - tx) * 0.0006 * k; // ほんの少し揺らす
-      c.vy += (c.y - ty) * 0.0006 * k;
-    }
+    // INPUT.tick：長押し判定更新など
+    INPUT.tick?.();
 
-    // 2) 粒子に小さな波（“何も起きない”を回避）
-    //    ※白飛びしないよう、速度だけを動かす（描画強度はrender側で制御）
-    for (let i = 0; i < P.n; i++) {
-      const x = P.x[i], y = P.y[i];
-      const dx = x - tx;
-      const dy = y - ty;
-      const d = Math.hypot(dx, dy);
-      if (d < 220) {
-        const k = Math.exp(-d * 0.028) * 0.9;
-        P.vx[i] += dx * 0.0016 * k;
-        P.vy[i] += dy * 0.0016 * k;
-      }
-    }
+    // ✅ タップが“必ず効く”ように、ここでtapImpulseを消費する設計に統一
+    // tapImpulse は input.js が保持しているので、sketchが粒子へ明示的に渡す
+    const tap = (INPUT.tapImpulse === 1) ? { p: INPUT.tapPos, t: INPUT.tapTime } : null;
 
-    // 3) タップの“痕”として場を少しだけ刻む（層）
-    //    fieldに直接書くのは重いので、近接セルだけ軽く
-    //    （Field側はdrag用の設計だが、ここでは“残留感”を足すだけ）
-    const cx = (tx / field.s) | 0;
-    const cy = (ty / field.s) | 0;
-    for (let oy = -1; oy <= 1; oy++) {
-      for (let ox = -1; ox <= 1; ox++) {
-        const x = cx + ox;
-        const y = cy + oy;
-        if (x < 0 || y < 0 || x >= field.cols || y >= field.rows) continue;
-        const id = y * field.cols + x;
-        field.carve[id] = U.clamp(field.carve[id] + 0.18, 0, 1);
-      }
-    }
+    // 時間
+    const dt = 16.67; // 安定化（可変dtでiPhoneがカクつくケースを避ける）
+    CORE.tick(dt);
 
-    // ✅ 消費
-    INPUT.consumeTap();
-  }
+    // “核”情報を粒子へ渡す（粒子側が使えるように window.CORE.getMain() を参照）
+    const core = CORE.getMain();
 
-  function stepCores(dt) {
-    for (const c of cores) {
-      // ゆっくり漂う
-      c.vx += U.randf(-1, 1) * CFG.CORE_DRIFT;
-      c.vy += U.randf(-1, 1) * CFG.CORE_DRIFT;
-
-      // 長押し：集める
-      if (INPUT.down && INPUT.longPress) {
-        const dx = INPUT.p.x - c.x;
-        const dy = INPUT.p.y - c.y;
-        c.vx += dx * 0.0012;
-        c.vy += dy * 0.0012;
-        c.energy = U.clamp(c.energy + 0.02, 0, 1);
-      }
-
-      // 減衰
-      c.energy *= 0.96;
-
-      // 位置更新
-      c.x += c.vx;
-      c.y += c.vy;
-      c.vx *= 0.985;
-      c.vy *= 0.985;
-
-      // 画面内
-      if (c.x < 40) { c.x = 40; c.vx *= -0.6; }
-      if (c.x > W-40) { c.x = W-40; c.vx *= -0.6; }
-      if (c.y < 40) { c.y = 40; c.vy *= -0.6; }
-      if (c.y > H-40) { c.y = H-40; c.vy *= -0.6; }
-    }
-
-    mergeCores();
-  }
-
-  function stepParticles(dt) {
-    for (let i = 0; i < P.n; i++) {
-      let x = P.x[i], y = P.y[i];
-      let vx = P.vx[i], vy = P.vy[i];
-
-      // 彫られた流れ
-      const f = field.sample(x, y);
-      vx += f.x * 0.32;
-      vy += f.y * 0.32;
-
-      // 核の引力＋渦
-      for (const c of cores) {
-        const dx = c.x - x;
-        const dy = c.y - y;
-        const d2 = dx*dx + dy*dy + 90;
-        const inv = 1.0 / d2;
-
-        const pull = CFG.CORE_PULL * c.mass;
-        vx += dx * inv * pull;
-        vy += dy * inv * pull;
-
-        const swirl = (0.0009 + c.energy * 0.0016) * c.mass;
-        vx += -dy * inv * swirl;
-        vy +=  dx * inv * swirl;
-      }
-
-      // 更新
-      x += vx;
-      y += vy;
-
-      // 摩擦（カクつき軽減）
-      vx *= 0.985;
-      vy *= 0.985;
-
-      // 外に出たら戻す
-      if (x < -40 || x > W + 40 || y < -40 || y > H + 40) {
-        x = U.randf(0, W);
-        y = U.randf(0, H);
-        vx = U.randf(-0.05, 0.05);
-        vy = U.randf(-0.05, 0.05);
-      }
-
-      P.x[i] = x; P.y[i] = y;
-      P.vx[i] = vx; P.vy[i] = vy;
-    }
-  }
-
-  function frame() {
-    const t = U.now();
-    const dt = Math.min(33, t - lastT);
-    lastT = t;
-
-    // 入力→場
-    field.step(INPUT);
-
-    // ✅ ここでタップを確実に反映（フレーム跨ぎで拾う）
-    applyTapImpulse();
-
-    // 進行
-    stepCores(dt);
-    stepParticles(dt);
+    // フィールド・粒子更新（粒子数を少し増やしたい＝1.2倍：cfgで調整する想定）
+    FIELD.update?.(dt, INPUT);
+    PARTICLES.update?.(dt, INPUT, core);
+    VOID.update?.(dt, INPUT, core);
 
     // 描画
-    R.clear(ctx, W, H);
-    R.drawParticles(ctx, P, field, cores);
-    R.drawCores(ctx, cores);
-    voidShadow.draw(ctx, W, H);
+    RENDER.draw?.(ctx, core);
 
-    // 後処理
-    INPUT.tick();
-
-    requestAnimationFrame(frame);
+    // tapImpulseをここで消費（次フレームに残さない）
+    if (tap) INPUT.consumeTap?.();
   }
 
-  requestAnimationFrame(frame);
+  function boot() {
+    canvas = document.getElementById("c");
+    ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+
+    // iOS Safariのスクロール干渉を抑える
+    canvas.style.touchAction = "none";
+
+    // 入力をcanvasにattach（これがないと“タップしても変化しない”）
+    INPUT.attach?.(canvas);
+
+    bindUI();
+    resize();
+    resetAll();
+
+    window.addEventListener("resize", () => {
+      resize();
+      resetAll();
+    });
+
+    cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(step);
+  }
+
+  boot();
 })();
