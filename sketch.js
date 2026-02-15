@@ -1,4 +1,4 @@
-// sketch.js
+// sketch.js（Reset確実発火 + iOS安定）
 (() => {
   const CFG = window.CFG, U = window.U;
   const INPUT = window.INPUT, FIELD = window.FIELD, P = window.PARTICLES;
@@ -29,22 +29,34 @@
     VOID.resize(w, h, dpr);
     R.resize(w, h, dpr);
 
-    // 初回は真っ黒から始まらないように
     ctx.fillStyle = "#000";
-    ctx.fillRect(0,0,w,h);
+    ctx.fillRect(0, 0, w, h);
   }
 
   function resetAll() {
     FIELD.reset();
     P.reset();
-    // 画面も軽くリセット
     ctx.fillStyle = "rgba(0,0,0,1)";
-    ctx.fillRect(0,0,w,h);
+    ctx.fillRect(0, 0, w, h);
   }
 
-  document.getElementById("btnReset").addEventListener("click", () => {
+  // ✅ Resetを「絶対に効かせる」
+  const btn = document.getElementById("btnReset");
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
     resetAll();
   });
+
+  // iOS Safari向け：touchstartでも確実に
+  btn.addEventListener(
+    "touchstart",
+    (e) => {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+      resetAll();
+    },
+    { passive: false }
+  );
 
   window.addEventListener("resize", resize);
 
@@ -53,24 +65,19 @@
     let dt = (now - last) / 1000;
     last = now;
 
-    // dt上限（背景が真っ白/真っ黒に飛ぶのを防ぐ）
     dt = Math.min(dt, CFG.DT_MAX || 0.033);
 
-    // 入力判定更新
     INPUT.tick();
 
-    // 更新
     FIELD.update(dt);
     P.update(dt);
 
-    // 描画
     R.draw(ctx, w, h);
     VOID.draw(ctx, w, h);
 
     requestAnimationFrame(frame);
   }
 
-  // 起動
   resize();
   requestAnimationFrame(frame);
 })();
