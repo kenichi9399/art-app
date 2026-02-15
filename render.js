@@ -1,137 +1,142 @@
 // render.js
-(function(){
+(() => {
   class Renderer {
-    constructor(canvas){
-      this.c = canvas;
-      this.ctx = canvas.getContext('2d', { alpha:true, desynchronized:true });
-      this.w=0; this.h=0; this.dpr=1;
+    constructor(canvas, ctx, w, h) {
+      this.canvas = canvas;
+      this.ctx = ctx;
+      this.resize(w,h);
 
-      // offscreen for soft dot sprite
-      this.dot = document.createElement('canvas');
-      this.dotCtx = this.dot.getContext('2d');
+      // offscreen（iOSでも使える範囲）
+      this.buf = document.createElement('canvas');
+      this.bctx = this.buf.getContext('2d');
+      this.buf.width = this.w;
+      this.buf.height = this.h;
 
-      // accumulation buffer (reduces flicker and prevents white-out)
-      this.acc = document.createElement('canvas');
-      this.accCtx = this.acc.getContext('2d', { alpha:true });
-
-      this._buildDot();
+      this.vs = new VoidShadow(this.w, this.h);
     }
 
-    resize(w,h,dpr){
-      this.w=w; this.h=h; this.dpr=dpr;
-      this.c.width = Math.floor(w*dpr);
-      this.c.height = Math.floor(h*dpr);
-      this.acc.width = this.c.width;
-      this.acc.height = this.c.height;
-
-      this.ctx.setTransform(dpr,0,0,dpr,0,0);
-      this.accCtx.setTransform(dpr,0,0,dpr,0,0);
-    }
-
-    clearFade(){
-      // fade previous frame in accumulation
-      const ctx=this.accCtx;
-      ctx.save();
-      ctx.globalCompositeOperation='source-over';
-      ctx.fillStyle=`rgba(0,0,0,${CFG.FADE})`;
-      ctx.fillRect(0,0,this.w,this.h);
-      ctx.restore();
-    }
-
-    _buildDot(){
-      const s=64;
-      this.dot.width=s; this.dot.height=s;
-      const g=this.dotCtx.createRadialGradient(s/2,s/2,0, s/2,s/2,s/2);
-      // soft center (avoid harsh white)
-      g.addColorStop(0,'rgba(255,255,255,0.92)');
-      g.addColorStop(0.35,'rgba(255,255,255,0.24)');
-      g.addColorStop(1,'rgba(255,255,255,0)');
-      this.dotCtx.clearRect(0,0,s,s);
-      this.dotCtx.fillStyle=g;
-      this.dotCtx.fillRect(0,0,s,s);
-    }
-
-    draw(system, bg){
-      const ctx=this.accCtx;
-
-      // 1) fade old
-      this.clearFade();
-
-      // 2) subtle background + vignette
-      // draw background into acc each frame lightly (keeps depth)
-      ctx.save();
-      ctx.globalCompositeOperation='source-over';
-      ctx.globalAlpha=0.25;
-      bg.drawTo(ctx,this.w,this.h);
-      ctx.restore();
-
-      const core=system.core;
-
-      // 3) draw particles
-      ctx.save();
-      ctx.globalCompositeOperation='lighter';
-      // lower alpha prevents white out
-      ctx.globalAlpha = CFG.ADDITIVE_ALPHA;
-
-      const p=system.p;
-      for(let i=0;i<p.length;i++){
-        const a=p[i];
-
-        // size scale with subtle breathing
-        const b = 0.85 + 0.15*Math.sin(a.life*2.2);
-        const r = a.s * b;
-
-        // alpha: smaller dots slightly dimmer; near core slightly brighter
-        const dx=a.x-core.x, dy=a.y-core.y;
-        const dist=Math.hypot(dx,dy);
-        const near = Math.exp(-dist/220);
-        let alpha = CFG.DOT_ALPHA * (0.55 + 0.45*near);
-        alpha *= U.clamp(0.55 + (r/6.2)*0.65, 0.55, 1);
-
-        // exposure clamp
-        alpha = Math.min(alpha, CFG.MAX_EXPOSURE);
-
-        const s = r*10; // sprite scale
-        ctx.globalAlpha = alpha * CFG.ADDITIVE_ALPHA;
-        ctx.drawImage(this.dot, a.x - s*0.5, a.y - s*0.5, s, s);
+    resize(w,h) {
+      this.w = w; this.h = h;
+      if (this.buf) {
+        this.buf.width = w; this.buf.height = h;
       }
-      ctx.restore();
+      if (this.vs) this.vs.resize(w,h);
+    }
 
-      // 4) core (nucleus)
-      ctx.save();
-      ctx.globalCompositeOperation='lighter';
+    clear() {
+      const ctx = this.ctx;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = 'rgba(5,7,13,1)';
+      ctx.fillRect(0,0,this.w,this.h);
+    }
 
-      const breathe = 1 + Math.sin(U.now()*0.0012 + core.phase)*CFG.CORE_BREATHE;
-      const R = (18 + core.energy*26) * breathe;
-      const S = (90 + core.energy*120) * breathe;
+    // highlight clamp: value->value
+    _tone(v) {
+      // v: 0..large
+      // exposure
+      v *= CFG.EXPOSURE;
 
-      // inner core
-      ctx.globalAlpha = 0.22;
-      ctx.beginPath();
-      ctx.fillStyle='rgba(210,225,255,1)';
-      ctx.arc(core.x, core.y, R, 0, Math.PI*2);
-      ctx.fill();
+      // soft clamp
+      const c = CFG.HIGHLIGHT_CLAMP;
+      // mapped = v/(v+1) に近いが、clamp感を調整
+      const mapped = v / (v + (1.0/c));
+      // gamma
+      return Math.pow(mapped, 1/CFG.GAMMA);
+    }
 
-      // outer aura gradient
-      const g = ctx.createRadialGradient(core.x,core.y, R*0.4, core.x,core.y, S);
-      g.addColorStop(0,'rgba(210,225,255,0.26)');
-      g.addColorStop(0.4,'rgba(210,225,255,0.10)');
-      g.addColorStop(1,'rgba(210,225,255,0)');
-      ctx.globalAlpha = 0.35;
-      ctx.fillStyle=g;
-      ctx.beginPath();
-      ctx.arc(core.x, core.y, S, 0, Math.PI*2);
-      ctx.fill();
+    draw(ps, meta) {
+      const w=this.w, h=this.h;
+      const ctx=this.ctx;
 
-      ctx.restore();
+      // 1) fade (残像)
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = `rgba(5,7,13,${CFG.BG_ALPHA})`;
+      ctx.fillRect(0,0,w,h);
 
-      // 5) present acc -> visible canvas
-      this.ctx.save();
-      this.ctx.globalCompositeOperation='source-over';
-      this.ctx.globalAlpha=1;
-      this.ctx.clearRect(0,0,this.w,this.h);
-      this.ctx.drawImage(this.acc,0,0,this.acc.width,this.acc.height,0,0,this.w,this.h);
-      this.ctx.restore();
+      // 2) deep shadow layer
+      this.vs.draw(ctx);
+
+      // 3) particles to buffer (additive but controlled)
+      const bctx = this.bctx;
+      bctx.clearRect(0,0,w,h);
+      bctx.globalCompositeOperation = 'source-over';
+
+      // draw particles as soft circles (micro/normal/rare big)
+      // brightness is controlled later by tone mapping feel (we mod alpha here)
+      const n = ps.count;
+      const x = ps.x, y = ps.y, size = ps.size, kind = ps.kind;
+
+      // core influence for brightness shaping
+      let core = ps.cores[ps.cores.length-1] || null;
+      const coreX = core ? core.p.x : w*0.5;
+      const coreY = core ? core.p.y : h*0.5;
+      const coreHeat = core ? core.heat : 0;
+
+      for (let i=0;i<n;i++) {
+        const px = x[i], py = y[i];
+        const s = size[i];
+
+        // distance to core affects intensity (nucleus depth)
+        const dx = px - coreX, dy = py - coreY;
+        const d = Math.hypot(dx,dy);
+
+        // base intensity: micro less intense, big more intense
+        let inten = 0.35;
+        if (kind[i] === 0) inten = 0.22;
+        if (kind[i] === 2) inten = 0.55;
+
+        // core falloff: near core brighter but clampable
+        const near = 1.0 - U.clamp(d / 420, 0, 1);
+        inten += near * (0.38 + 0.25*meta.coreShape);
+
+        // avoid pure white blowout: cap intensity
+        inten = U.clamp(inten, 0.10, 0.85);
+
+        // alpha shaping
+        const a = inten * 0.65 * CFG.GLOW_PARTICLE;
+
+        // draw soft circle
+        const r = s * (1.0 + 0.35*near);
+        const g = bctx.createRadialGradient(px,py,0, px,py, r*2.4);
+        g.addColorStop(0.0, `rgba(255,255,255,${a})`);
+        g.addColorStop(0.6, `rgba(220,230,255,${a*0.35})`);
+        g.addColorStop(1.0, `rgba(0,0,0,0)`);
+        bctx.fillStyle = g;
+        bctx.beginPath();
+        bctx.arc(px,py, r*2.2, 0, Math.PI*2);
+        bctx.fill();
+      }
+
+      // 4) core glow (buffer)
+      if (core) {
+        const px = core.p.x, py = core.p.y;
+        const heat = coreHeat;
+        const base = 0.55 + 0.22*meta.coreShape;
+
+        const r0 = 34 + 28*meta.coreShape;
+        const g = bctx.createRadialGradient(px,py, 0, px,py, r0*4.2);
+        const a0 = (0.22 + 0.18*heat) * CFG.GLOW_CORE; // 控えめ
+        g.addColorStop(0.0, `rgba(240,245,255,${a0})`);
+        g.addColorStop(0.25, `rgba(180,200,255,${a0*0.55})`);
+        g.addColorStop(1.0, `rgba(0,0,0,0)`);
+        bctx.fillStyle = g;
+        bctx.beginPath();
+        bctx.arc(px,py, r0*3.8, 0, Math.PI*2);
+        bctx.fill();
+      }
+
+      // 5) composite buffer to main using "lighter" but modest alpha
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = CFG.GLOW_GLOBAL;
+      ctx.drawImage(this.buf, 0,0);
+      ctx.globalAlpha = 1;
+
+      // 6) final slight clamp overlay (prevents white flash perception)
+      // A subtle dark veil that increases only when core is intense
+      const veil = 0.04 + 0.06*(meta.coreShape||0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = `rgba(0,0,0,${veil})`;
+      ctx.fillRect(0,0,w,h);
     }
   }
 
