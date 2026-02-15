@@ -1,49 +1,66 @@
 // sketch.js
 (() => {
   const canvas = document.getElementById('c');
+  const resetBtn = document.getElementById('resetBtn');
+
+  function panic(msg) {
+    // index.html のエラーボックスへ出す
+    const box = document.getElementById('err');
+    if (box) {
+      box.style.display = 'block';
+      box.textContent = msg;
+    } else {
+      alert(msg);
+    }
+  }
 
   function get2DContext(c) {
-    // iOS Safari: beginPath undefined が出る時は context取得が失敗している
-    // → 2Dで取得し直し + fallback
     let ctx = null;
     try {
-      ctx = c.getContext('2d', { alpha: false, desynchronized: !!CFG.DESYNC });
-    } catch(e) {
+      ctx = c.getContext('2d', { alpha: false, desynchronized: !!(window.CFG && CFG.DESYNC) });
+    } catch (_) {
       ctx = c.getContext('2d');
     }
     return ctx;
   }
 
   const ctx = get2DContext(canvas);
-
-  // もしctxが取れないなら、ここで止めてメッセージ
   if (!ctx || typeof ctx.beginPath !== 'function') {
-    alert('2D描画コンテキストの取得に失敗しました。Safariを再読み込みしてください。');
+    panic('2D context failed.\nSafariを再読み込みしてください。\n( ctx is null or beginPath missing )');
     return;
   }
 
-  // state
+  // ==== safe init ====
   let W = 0, H = 0, DPR = 1;
+  const perf = { fps: 60, _frames: 0, _t: performance.now() };
 
-  const perf = { fps: 60, _acc: 0, _frames: 0, _t: performance.now() };
+  // 依存チェック（黒画面の原因が分かるように）
+  if (!window.CFG) { panic('CFG is missing. cfg.js が読み込めていません'); return; }
+  if (!window.U)   { panic('U is missing. utils.js が読み込めていません'); return; }
+  if (!window.Input) { panic('Input is missing. input.js が読み込めていません'); return; }
+  if (!window.Field) { panic('Field is missing. field.js が読み込めていません'); return; }
+  if (!window.VoidShadow) { panic('VoidShadow is missing. void_shadow.js が読み込めていません'); return; }
+  if (!window.ParticleSystem) { panic('ParticleSystem is missing. particles.js が読み込めていません'); return; }
+  if (!window.Renderer) { panic('Renderer is missing. render.js が読み込めていません'); return; }
+
   const input = new Input(canvas);
-  let field = new Field(1,1);
-  let ps = new ParticleSystem(1,1);
-  let renderer = new Renderer(canvas, ctx, 1,1);
+  let field = new Field(1, 1);
+  let ps = new ParticleSystem(1, 1);
+  let renderer = new Renderer(canvas, ctx, 1, 1);
 
   function resize() {
     const r = canvas.getBoundingClientRect();
     const w = Math.max(1, Math.floor(r.width));
     const h = Math.max(1, Math.floor(r.height));
-    const dpr = Math.min(CFG.DPR_MAX, window.devicePixelRatio || 1);
+    const dpr = Math.min(CFG.DPR_MAX || 2, window.devicePixelRatio || 1);
 
     W = w; H = h; DPR = dpr;
 
-    canvas.width = Math.floor(w * dpr);
+    canvas.width  = Math.floor(w * dpr);
     canvas.height = Math.floor(h * dpr);
 
-    // scale to CSS pixels
-    ctx.setTransform(dpr,0,0,dpr,0,0);
+    // CSSピクセルに合わせる
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     field.resize(w, h);
     ps.resize(w, h);
@@ -52,25 +69,23 @@
     renderer.clear();
   }
 
-  // iOS: 初回表示が真っ黒になるのを避けるため、確実に一度描画
-  function warmup() {
-    renderer.clear();
+  // Reset（確実に反応させる）
+  if (resetBtn) {
+    resetBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      try {
+        ps.reset();
+        input.reset?.();
+        renderer.clear();
+      } catch (err) {
+        panic('Reset failed:\n' + String(err && err.stack ? err.stack : err));
+      }
+    }, { passive: false });
   }
 
-  // Reset button
-  const resetBtn = document.getElementById('resetBtn');
-  resetBtn?.addEventListener('click', (e) => {
-    e.preventDefault();
-    ps.reset();
-    input.reset();
-    renderer.clear();
-  }, { passive: false });
-
-  // iOS Safari: orientationchange/resize
-  window.addEventListener('resize', () => resize(), { passive: true });
+  window.addEventListener('resize', resize, { passive: true });
   window.addEventListener('orientationchange', () => setTimeout(resize, 200), { passive: true });
 
-  // main loop
   let last = performance.now();
   function loop() {
     const now = performance.now();
@@ -78,7 +93,7 @@
     last = now;
     dt = Math.min(dt, 0.05);
 
-    // perf calc
+    // fps
     perf._frames++;
     const span = (now - perf._t) / 1000;
     if (span >= 0.7) {
@@ -87,18 +102,19 @@
       perf._t = now;
     }
 
-    // update
-    field.update(dt, input);
-    const meta = ps.update(dt, field, input, perf);
-
-    // render
-    renderer.draw(ps, meta);
+    try {
+      field.update(dt, input);
+      const meta = ps.update(dt, field, input, perf);
+      renderer.draw(ps, meta);
+    } catch (err) {
+      panic('Runtime error:\n' + String(err && err.stack ? err.stack : err));
+      return; // ループ停止（真っ黒放置を防ぐ）
+    }
 
     requestAnimationFrame(loop);
   }
 
   // init
   resize();
-  warmup();
   requestAnimationFrame(loop);
 })();
