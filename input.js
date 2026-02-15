@@ -1,169 +1,231 @@
 // input.js
+// iOS Safari friendly input handler.
+// Exposes: window.Input
+
 (() => {
+  const U = window.U || {};
+
+  // フォールバック（念のため）
+  const v2 = U.v2 ? U.v2 : (x = 0, y = 0) => ({ x, y });
+  const clamp = U.clamp ? U.clamp : (n, a, b) => (n < a ? a : n > b ? b : n);
+
   class Input {
     constructor(canvas) {
       this.canvas = canvas;
 
-      this.down = false;
-      this.justTap = false;
+      // pointer state (CSS px coords in canvas space)
+      this.pos = v2(0, 0);
+      this.prev = v2(0, 0);
+      this.delta = v2(0, 0);
 
-      this.pos = U.v2(0, 0);
-      this.prev = U.v2(0, 0);
-      this.delta = U.v2(0, 0);
-      this.vel = U.v2(0, 0);
+      this.isDown = false;
+      this.justDown = false;
+      this.justUp = false;
 
-      this.lastTime = performance.now();
-      this.downTime = 0;
+      // interaction semantics
+      this.tap = false;
+      this.dragging = false;
+      this.dragDist = 0;
 
-      this.longPress = false;
-      this.longPressMs = 420; // 体感で気持ちいい閾値
+      this.hold = false;        // long-press active
+      this.holdTime = 0;        // seconds
+      this.holdThreshold = 0.32;// seconds
 
-      this.activeId = null;
+      this.pointerId = null;
+
+      // internal
+      this._downPos = v2(0, 0);
+      this._moved = 0;
+      this._lastTS = performance.now();
+
       this._bind();
     }
 
-    _rect() {
-      return this.canvas.getBoundingClientRect();
+    reset() {
+      this.isDown = this.justDown = this.justUp = false;
+      this.tap = this.dragging = false;
+      this.dragDist = 0;
+      this.hold = false;
+      this.holdTime = 0;
+      this.pointerId = null;
+      this._moved = 0;
+      this._lastTS = performance.now();
     }
 
-    _toCanvasXY(clientX, clientY) {
-      const r = this._rect();
-      const x = (clientX - r.left);
-      const y = (clientY - r.top);
-      return U.v2(x, y);
+    // optional if field/ps wants dt-driven update
+    update(dt) {
+      // one-frame flags reset here
+      this.tap = false;
+      this.justDown = false;
+      this.justUp = false;
+
+      if (this.isDown) {
+        this.holdTime += dt;
+        if (!this.hold && this.holdTime >= this.holdThreshold && !this.dragging) {
+          this.hold = true;
+        }
+      } else {
+        this.hold = false;
+        this.holdTime = 0;
+      }
+    }
+
+    _canvasToLocal(clientX, clientY) {
+      const r = this.canvas.getBoundingClientRect();
+      const x = clientX - r.left;
+      const y = clientY - r.top;
+      return v2(x, y);
+    }
+
+    _setPos(p) {
+      this.prev.x = this.pos.x; this.prev.y = this.pos.y;
+      this.pos.x = p.x; this.pos.y = p.y;
+      this.delta.x = this.pos.x - this.prev.x;
+      this.delta.y = this.pos.y - this.prev.y;
+      this.dragDist += Math.sqrt(this.delta.x * this.delta.x + this.delta.y * this.delta.y);
+    }
+
+    _onDown(p, pointerId) {
+      this.isDown = true;
+      this.justDown = true;
+      this.justUp = false;
+      this.tap = false;
+
+      this.dragging = false;
+      this.dragDist = 0;
+
+      this.hold = false;
+      this.holdTime = 0;
+
+      this.pointerId = pointerId ?? this.pointerId;
+
+      this._downPos.x = p.x; this._downPos.y = p.y;
+      this._moved = 0;
+      this._setPos(p);
+      this._lastTS = performance.now();
+    }
+
+    _onMove(p) {
+      this._setPos(p);
+
+      const dx = this.pos.x - this._downPos.x;
+      const dy = this.pos.y - this._downPos.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      this._moved = dist;
+
+      // drag threshold (finger jitter tolerant)
+      if (this.isDown && !this.dragging && dist >= 6) {
+        this.dragging = true;
+        this.hold = false; // drag優先
+      }
+    }
+
+    _onUp(p) {
+      // final move
+      this._setPos(p);
+
+      this.isDown = false;
+      this.justUp = true;
+
+      // tap 判定：ほぼ動いてない + holdしてない
+      if (!this.dragging && !this.hold && this._moved < 8) {
+        this.tap = true;
+      }
+
+      this.dragging = false;
+      this.hold = false;
+      this.holdTime = 0;
+      this.pointerId = null;
     }
 
     _bind() {
-      // iOS Safari: まずcanvasがスクロール/ズームに奪われないようにする
-      // （CSSの touch-action:none も併用）
-      const opts = { passive: false };
+      const c = this.canvas;
 
-      // Pointer events（対応していれば最優先）
-      if (window.PointerEvent) {
-        this.canvas.addEventListener('pointerdown', (e) => this._onPointerDown(e), opts);
-        this.canvas.addEventListener('pointermove', (e) => this._onPointerMove(e), opts);
-        this.canvas.addEventListener('pointerup',   (e) => this._onPointerUp(e), opts);
-        this.canvas.addEventListener('pointercancel', (e) => this._onPointerUp(e), opts);
+      // iOS: スクロール/ズームに取られないようにする
+      // （index.htmlでも touch-action:none を入れているが二重で安全）
+      c.style.touchAction = 'none';
+
+      // pointer events if available
+      const hasPointer = 'PointerEvent' in window;
+
+      if (hasPointer) {
+        c.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          c.setPointerCapture?.(e.pointerId);
+          const p = this._canvasToLocal(e.clientX, e.clientY);
+          this._onDown(p, e.pointerId);
+        }, { passive: false });
+
+        c.addEventListener('pointermove', (e) => {
+          // capture中のみ追う
+          if (!this.isDown) return;
+          e.preventDefault();
+          const p = this._canvasToLocal(e.clientX, e.clientY);
+          this._onMove(p);
+        }, { passive: false });
+
+        c.addEventListener('pointerup', (e) => {
+          e.preventDefault();
+          const p = this._canvasToLocal(e.clientX, e.clientY);
+          this._onUp(p);
+        }, { passive: false });
+
+        c.addEventListener('pointercancel', (e) => {
+          e.preventDefault();
+          const p = this._canvasToLocal(e.clientX, e.clientY);
+          this._onUp(p);
+        }, { passive: false });
+
       } else {
         // Touch fallback
-        this.canvas.addEventListener('touchstart', (e) => this._onTouchStart(e), opts);
-        this.canvas.addEventListener('touchmove',  (e) => this._onTouchMove(e), opts);
-        this.canvas.addEventListener('touchend',   (e) => this._onTouchEnd(e), opts);
-        this.canvas.addEventListener('touchcancel',(e) => this._onTouchEnd(e), opts);
+        c.addEventListener('touchstart', (e) => {
+          e.preventDefault();
+          const t = e.changedTouches[0];
+          const p = this._canvasToLocal(t.clientX, t.clientY);
+          this._onDown(p, 'touch');
+        }, { passive: false });
+
+        c.addEventListener('touchmove', (e) => {
+          if (!this.isDown) return;
+          e.preventDefault();
+          const t = e.changedTouches[0];
+          const p = this._canvasToLocal(t.clientX, t.clientY);
+          this._onMove(p);
+        }, { passive: false });
+
+        c.addEventListener('touchend', (e) => {
+          e.preventDefault();
+          const t = e.changedTouches[0];
+          const p = this._canvasToLocal(t.clientX, t.clientY);
+          this._onUp(p);
+        }, { passive: false });
+
+        c.addEventListener('touchcancel', (e) => {
+          e.preventDefault();
+          const t = e.changedTouches[0] || { clientX: 0, clientY: 0 };
+          const p = this._canvasToLocal(t.clientX, t.clientY);
+          this._onUp(p);
+        }, { passive: false });
 
         // Mouse fallback
-        this.canvas.addEventListener('mousedown', (e) => this._onMouseDown(e), opts);
-        window.addEventListener('mousemove', (e) => this._onMouseMove(e), opts);
-        window.addEventListener('mouseup', (e) => this._onMouseUp(e), opts);
+        c.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const p = this._canvasToLocal(e.clientX, e.clientY);
+          this._onDown(p, 'mouse');
+        }, { passive: false });
+
+        window.addEventListener('mousemove', (e) => {
+          if (!this.isDown) return;
+          const p = this._canvasToLocal(e.clientX, e.clientY);
+          this._onMove(p);
+        }, { passive: true });
+
+        window.addEventListener('mouseup', (e) => {
+          if (!this.isDown) return;
+          const p = this._canvasToLocal(e.clientX, e.clientY);
+          this._onUp(p);
+        }, { passive: true });
       }
-    }
-
-    _startAt(p, id=null) {
-      this.down = true;
-      this.activeId = id;
-      this.justTap = true;
-
-      this.pos = p;
-      this.prev = p;
-      this.delta = U.v2(0,0);
-      this.vel = U.v2(0,0);
-
-      this.downTime = performance.now();
-      this.longPress = false;
-    }
-
-    _moveTo(p) {
-      const now = performance.now();
-      const dt = Math.max(0.001, (now - this.lastTime) / 1000);
-      this.lastTime = now;
-
-      this.prev = this.pos;
-      this.pos = p;
-      this.delta = U.sub(this.pos, this.prev);
-
-      // velocity (px/s)
-      this.vel = U.mul(this.delta, 1/dt);
-
-      // 長押し判定
-      if (this.down && !this.longPress) {
-        if ((now - this.downTime) >= this.longPressMs) {
-          this.longPress = true;
-        }
-      }
-
-      // タップ判定は「動いたら解除」
-      if (U.len(this.delta) > 2.5) this.justTap = false;
-    }
-
-    _end() {
-      this.down = false;
-      this.activeId = null;
-      this.longPress = false;
-      this.justTap = false;
-    }
-
-    // Pointer
-    _onPointerDown(e) {
-      e.preventDefault();
-      this.canvas.setPointerCapture?.(e.pointerId);
-      const p = this._toCanvasXY(e.clientX, e.clientY);
-      this._startAt(p, e.pointerId);
-    }
-    _onPointerMove(e) {
-      if (!this.down) return;
-      if (this.activeId !== null && e.pointerId !== this.activeId) return;
-      e.preventDefault();
-      const p = this._toCanvasXY(e.clientX, e.clientY);
-      this._moveTo(p);
-    }
-    _onPointerUp(e) {
-      if (this.activeId !== null && e.pointerId !== this.activeId) return;
-      e.preventDefault();
-      this._end();
-    }
-
-    // Touch
-    _onTouchStart(e) {
-      e.preventDefault();
-      const t = e.changedTouches[0];
-      const p = this._toCanvasXY(t.clientX, t.clientY);
-      this._startAt(p, t.identifier);
-    }
-    _onTouchMove(e) {
-      if (!this.down) return;
-      e.preventDefault();
-      const t = Array.from(e.changedTouches).find(t => t.identifier === this.activeId) || e.changedTouches[0];
-      const p = this._toCanvasXY(t.clientX, t.clientY);
-      this._moveTo(p);
-    }
-    _onTouchEnd(e) {
-      e.preventDefault();
-      this._end();
-    }
-
-    // Mouse
-    _onMouseDown(e) {
-      e.preventDefault();
-      const p = this._toCanvasXY(e.clientX, e.clientY);
-      this._startAt(p, 'mouse');
-    }
-    _onMouseMove(e) {
-      if (!this.down) return;
-      e.preventDefault();
-      const p = this._toCanvasXY(e.clientX, e.clientY);
-      this._moveTo(p);
-    }
-    _onMouseUp(e) {
-      if (!this.down) return;
-      e.preventDefault();
-      this._end();
-    }
-
-    reset() {
-      this.down = false;
-      this.justTap = false;
-      this.longPress = false;
-      this.activeId = null;
     }
   }
 
