@@ -2,19 +2,19 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <meta name="theme-color" content="#000000" />
   <title>Touching Light — Quiet Luxury</title>
+
   <style>
     html, body {
-      margin: 0; padding: 0;
-      width: 100%; height: 100%;
+      margin: 0;
+      padding: 0;
+      height: 100%;
       background: #000;
       overflow: hidden;
-      touch-action: none; /* iOS Safari: これ超重要 */
       -webkit-user-select: none;
       user-select: none;
-      font-family: ui-serif, Georgia, "Times New Roman", serif;
     }
     #c {
       position: fixed;
@@ -22,125 +22,137 @@
       width: 100vw;
       height: 100vh;
       display: block;
+      touch-action: none; /* iOS Safariで重要 */
     }
-    .hud {
+
+    /* UI */
+    .ui {
       position: fixed;
-      top: env(safe-area-inset-top);
-      left: env(safe-area-inset-left);
-      right: env(safe-area-inset-right);
-      padding: 14px;
-      pointer-events: none;
+      left: 18px;
+      top: 18px;
+      right: 18px;
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      pointer-events: none; /* canvas操作を邪魔しない */
+      z-index: 10;
     }
-    .panel {
+    .card {
       pointer-events: none;
-      max-width: 560px;
-      color: rgba(255,255,255,0.92);
-      background: rgba(20,20,24,0.55);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      flex: 1;
+      max-width: 520px;
+      padding: 20px 22px;
+      border-radius: 22px;
+      background: rgba(20, 20, 24, 0.55);
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 18px;
-      padding: 14px 16px;
-      box-shadow: 0 18px 60px rgba(0,0,0,0.55);
-      line-height: 1.35;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      color: rgba(255,255,255,0.92);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.35);
     }
     .title {
-      font-size: 34px;
-      letter-spacing: 0.5px;
-      margin: 0 0 8px 0;
+      font-family: ui-serif, "Times New Roman", serif;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      font-size: 44px;
+      line-height: 1.05;
+      margin: 0 0 10px 0;
     }
     .sub {
+      font-family: ui-sans-serif, -apple-system, system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
       font-size: 16px;
-      opacity: 0.9;
-      margin: 0 0 4px 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
+      opacity: 0.78;
+      margin: 0 0 8px 0;
     }
     .jp {
+      font-family: ui-sans-serif, -apple-system, system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
       font-size: 15px;
-      opacity: 0.75;
+      opacity: 0.70;
       margin: 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
     }
+
     .btns {
-      position: fixed;
-      top: calc(env(safe-area-inset-top) + 14px);
-      right: calc(env(safe-area-inset-right) + 14px);
+      margin-left: auto;
+      pointer-events: auto; /* ボタンだけ押せる */
       display: flex;
-      gap: 10px;
-      pointer-events: auto;
+      gap: 12px;
+      align-items: flex-start;
     }
     button {
       appearance: none;
       border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(20,20,24,0.55);
-      color: rgba(255,255,255,0.92);
-      border-radius: 16px;
-      padding: 12px 16px;
-      font-size: 16px;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+      background: rgba(20, 20, 24, 0.55);
+      color: rgba(255,255,255,0.90);
+      border-radius: 18px;
+      padding: 14px 18px;
+      font-size: 18px;
+      font-weight: 600;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      box-shadow: 0 14px 34px rgba(0,0,0,0.35);
     }
     button:active { transform: translateY(1px); }
-    .err {
+
+    /* error toast */
+    #err {
       position: fixed;
-      left: 12px;
-      right: 12px;
-      bottom: calc(env(safe-area-inset-bottom) + 12px);
-      padding: 10px 12px;
-      background: rgba(140,20,20,0.75);
-      color: #fff;
-      border-radius: 12px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      font-size: 12px;
+      left: 18px;
+      right: 18px;
+      bottom: 18px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(120, 20, 20, 0.78);
+      color: rgba(255,255,255,0.95);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.35;
       display: none;
-      white-space: pre-wrap;
+      z-index: 999;
       pointer-events: none;
     }
   </style>
 </head>
+
 <body>
   <canvas id="c"></canvas>
 
-  <div class="hud">
-    <div class="panel">
+  <div class="ui">
+    <div class="card">
       <h1 class="title">Touching Light — Quiet Luxury</h1>
       <p class="sub">tap / drag / long-press</p>
       <p class="jp">静かな粒子と光の核が、触れ方で変わります</p>
     </div>
+
+    <div class="btns">
+      <button id="btnReset" type="button">Reset</button>
+    </div>
   </div>
 
-  <div class="btns">
-    <button id="btnReset" type="button">Reset</button>
-  </div>
-
-  <div id="err" class="err"></div>
-
-  <!-- ✅ deferで「記述順に実行」されます。順番が超重要 -->
-  <script defer src="./cfg.js"></script>
-  <script defer src="./utils.js"></script>
-  <script defer src="./input.js"></script>
-  <script defer src="./field.js"></script>
-  <script defer src="./particles.js"></script>
-  <script defer src="./void_shadow.js"></script>
-  <script defer src="./render.js"></script>
-  <script defer src="./sketch.js"></script>
+  <div id="err"></div>
 
   <script>
-    // 例外で真っ黒停止しないように、見える形で出す
+    // 画面下にエラーを出す（iPhoneでデバッグしやすい）
     (function(){
-      const el = document.getElementById('err');
-      function show(msg){
-        el.style.display = 'block';
-        el.textContent = msg;
-      }
+      const box = document.getElementById('err');
       window.addEventListener('error', (e) => {
-        show(String(e.message || e.error || e));
+        box.style.display = 'block';
+        box.textContent = String(e.message || e.error || e);
       });
       window.addEventListener('unhandledrejection', (e) => {
-        show(String(e.reason || e));
+        box.style.display = 'block';
+        box.textContent = String(e.reason || e);
       });
     })();
   </script>
+
+  <!-- ✅ 読み込み順が重要：utils → cfg → input → field → particles → void_shadow → render → sketch -->
+  <script src="./utils.js"></script>
+  <script src="./cfg.js"></script>
+  <script src="./input.js"></script>
+  <script src="./field.js"></script>
+  <script src="./particles.js"></script>
+  <script src="./void_shadow.js"></script>
+  <script src="./render.js"></script>
+  <script src="./sketch.js"></script>
 </body>
 </html>
