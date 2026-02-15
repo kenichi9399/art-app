@@ -90,7 +90,7 @@
     // 流れは少しずつ減衰
     if (FIELD.flow) {
       const f = FIELD.flow;
-      for (let i = 0; i < f.length; i++) f[i] *= 0.965;
+      for (let i = 0; i < f.length; i++) f[i] *= 0.98;
     }
 
     // 入力で彫る
