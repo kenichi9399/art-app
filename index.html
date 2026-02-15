@@ -1,88 +1,165 @@
-<!-- index.html -->
 <!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <meta name="color-scheme" content="dark" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Touching Light — Quiet Luxury</title>
   <style>
-    :root{
-      --bg:#05070d;
-      --fg:rgba(240,245,255,.88);
-      --muted:rgba(240,245,255,.55);
-      --card:rgba(255,255,255,.06);
-      --border:rgba(255,255,255,.14);
-      --shadow:rgba(0,0,0,.55);
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #05070d;
+      overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
     }
-    html,body{
-      margin:0; padding:0; height:100%;
-      background:var(--bg); overflow:hidden;
-      -webkit-user-select:none; user-select:none;
-      -webkit-touch-callout:none;
-      -webkit-tap-highlight-color:transparent;
-      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans JP","Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;
+
+    /* iOS Safari: タッチ操作をブラウザUI（スクロール/拡大）に奪われない */
+    body { touch-action: none; }
+
+    #wrap {
+      position: fixed;
+      inset: 0;
+      background: #05070d;
     }
-    canvas{ display:block; width:100vw; height:100vh; touch-action:none; }
-    .hud{
-      position:fixed; left:14px; top:14px;
-      display:flex; gap:12px; align-items:flex-start;
-      pointer-events:none;
+
+    canvas#c {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
     }
-    .card{
-      pointer-events:none;
-      padding:14px 14px 12px;
-      border-radius:18px;
-      background:var(--card);
-      border:1px solid var(--border);
-      box-shadow:0 12px 36px var(--shadow);
+
+    /* UI */
+    #ui {
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      right: 12px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      pointer-events: none; /* ここ重要：UI以外は入力を邪魔しない */
+    }
+
+    #card {
+      max-width: 68%;
+      padding: 14px 16px;
+      border-radius: 18px;
+      color: rgba(255,255,255,0.92);
+      background: rgba(24, 26, 34, 0.62);
+      border: 1px solid rgba(255,255,255,0.08);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
-      max-width: 70vw;
+      pointer-events: none;
     }
-    .title{ color:var(--fg); font-weight:650; letter-spacing:.2px; }
-    .sub{ margin-top:6px; color:var(--muted); font-size:13px; line-height:1.4; }
-    .btns{
-      pointer-events:auto;
-      display:flex; gap:10px;
-      margin-left:2px;
+    #title {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      margin-bottom: 6px;
     }
-    button{
-      appearance:none; border:1px solid var(--border);
-      background:rgba(255,255,255,.05);
-      color:var(--fg);
-      border-radius:16px;
-      padding:10px 14px;
-      font-size:14px;
-      font-weight:600;
-      box-shadow:0 10px 28px var(--shadow);
+    #sub {
+      font-size: 13px;
+      opacity: 0.82;
+      line-height: 1.25rem;
+    }
+
+    #buttons {
+      margin-left: auto;
+      display: flex;
+      gap: 10px;
+      pointer-events: auto; /* ボタンだけはタップ可能に戻す */
+    }
+    .btn {
+      padding: 12px 16px;
+      border-radius: 16px;
+      color: rgba(255,255,255,0.92);
+      background: rgba(24, 26, 34, 0.62);
+      border: 1px solid rgba(255,255,255,0.10);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
+      font-size: 16px;
+      font-weight: 600;
+      line-height: 1;
+      cursor: pointer;
     }
-    button:active{ transform: translateY(1px); }
+    .btn:active { transform: scale(0.98); }
+
+    /* 画面上エラーログ（黒画面対策の要） */
+    #err {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      color: rgba(255,255,255,0.92);
+      background: rgba(120, 20, 20, 0.55);
+      border: 1px solid rgba(255,255,255,0.10);
+      font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      white-space: pre-wrap;
+      display: none;
+      pointer-events: auto;
+    }
   </style>
 </head>
-<body>
-  <canvas id="c"></canvas>
 
-  <div class="hud">
-    <div class="card">
-      <div class="title">Touching Light — Quiet Luxury</div>
-      <div class="sub">tap / drag / long-press<br>静かな粒子と光の核が、触れ方で変わります</div>
+<body>
+  <div id="wrap">
+    <canvas id="c"></canvas>
+
+    <div id="ui">
+      <div id="card">
+        <div id="title">Touching Light — Quiet Luxury</div>
+        <div id="sub">tap / drag / long-press<br>静かな粒子と光の核が、触れ方で変わります</div>
+      </div>
+
+      <div id="buttons">
+        <button id="resetBtn" class="btn" type="button">Reset</button>
+      </div>
     </div>
-    <div class="btns">
-      <button id="resetBtn" type="button">Reset</button>
-    </div>
+
+    <div id="err"></div>
   </div>
 
-  <!-- IMPORTANT: order matters -->
+  <script>
+    // ==== On-screen error overlay ====
+    (function(){
+      const box = document.getElementById('err');
+      function show(msg){
+        box.style.display = 'block';
+        box.textContent = msg;
+      }
+      window.addEventListener('error', (e) => {
+        const m = [
+          'JavaScript error',
+          String(e.message || e.error || 'unknown'),
+          (e.filename ? `@ ${e.filename}:${e.lineno}:${e.colno}` : '')
+        ].filter(Boolean).join('\n');
+        show(m);
+      });
+      window.addEventListener('unhandledrejection', (e) => {
+        const m = [
+          'Promise rejection',
+          String(e.reason || 'unknown')
+        ].join('\n');
+        show(m);
+      });
+    })();
+  </script>
+
+  <!-- ★重要：読み込み順（これが崩れると黒画面になりやすい） -->
   <script src="./cfg.js"></script>
   <script src="./utils.js"></script>
+  <script src="./input.js"></script>
   <script src="./field.js"></script>
   <script src="./void_shadow.js"></script>
   <script src="./particles.js"></script>
   <script src="./render.js"></script>
-  <script src="./input.js"></script>
   <script src="./sketch.js"></script>
 </body>
 </html>
