@@ -2,164 +2,114 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b0d" />
   <title>Touching Light — Quiet Luxury</title>
   <style>
     html, body {
       margin: 0;
-      padding: 0;
       height: 100%;
-      background: #05070d;
+      background: #0b0b0d;
       overflow: hidden;
+      touch-action: none; /* important for iOS gesture stability */
       -webkit-user-select: none;
       user-select: none;
     }
-
-    /* iOS Safari: タッチ操作をブラウザUI（スクロール/拡大）に奪われない */
-    body { touch-action: none; }
-
-    #wrap {
-      position: fixed;
-      inset: 0;
-      background: #05070d;
-    }
-
-    canvas#c {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
+    canvas {
       display: block;
+      width: 100vw;
+      height: 100vh;
       touch-action: none;
     }
 
-    /* UI */
-    #ui {
-      position: absolute;
-      left: 12px;
-      top: 12px;
-      right: 12px;
+    /* UI overlay */
+    .ui {
+      position: fixed;
+      left: 16px;
+      top: 16px;
+      right: 16px;
       display: flex;
       gap: 12px;
       align-items: flex-start;
-      pointer-events: none; /* ここ重要：UI以外は入力を邪魔しない */
+      pointer-events: none; /* let canvas receive touches by default */
+      z-index: 10;
     }
-
-    #card {
-      max-width: 68%;
-      padding: 14px 16px;
+    .panel {
+      max-width: 62vw;
+      padding: 16px 16px 14px;
       border-radius: 18px;
-      color: rgba(255,255,255,0.92);
-      background: rgba(24, 26, 34, 0.62);
-      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(16,16,20,0.55);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      color: rgba(255,255,255,0.92);
       pointer-events: none;
     }
-    #title {
-      font-size: 20px;
-      font-weight: 600;
+    .title {
+      font-size: 22px;
+      font-weight: 700;
       letter-spacing: 0.2px;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
-    #sub {
-      font-size: 13px;
-      opacity: 0.82;
-      line-height: 1.25rem;
+    .hint {
+      font-size: 14px;
+      opacity: 0.85;
+      line-height: 1.35;
     }
-
-    #buttons {
+    .btns {
       margin-left: auto;
       display: flex;
       gap: 10px;
-      pointer-events: auto; /* ボタンだけはタップ可能に戻す */
+      pointer-events: auto; /* buttons must be clickable */
     }
-    .btn {
-      padding: 12px 16px;
-      border-radius: 16px;
-      color: rgba(255,255,255,0.92);
-      background: rgba(24, 26, 34, 0.62);
-      border: 1px solid rgba(255,255,255,0.10);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+    button {
+      padding: 14px 18px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(16,16,20,0.55);
+      color: rgba(255,255,255,0.9);
       font-size: 16px;
       font-weight: 600;
-      line-height: 1;
-      cursor: pointer;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
     }
-    .btn:active { transform: scale(0.98); }
-
-    /* 画面上エラーログ（黒画面対策の要） */
-    #err {
-      position: absolute;
-      left: 12px;
-      right: 12px;
-      bottom: 12px;
-      padding: 12px 14px;
-      border-radius: 14px;
-      color: rgba(255,255,255,0.92);
-      background: rgba(120, 20, 20, 0.55);
-      border: 1px solid rgba(255,255,255,0.10);
-      font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      white-space: pre-wrap;
-      display: none;
-      pointer-events: auto;
-    }
+    button:active { transform: translateY(1px); }
   </style>
 </head>
-
 <body>
-  <div id="wrap">
-    <canvas id="c"></canvas>
+  <canvas id="c"></canvas>
 
-    <div id="ui">
-      <div id="card">
-        <div id="title">Touching Light — Quiet Luxury</div>
-        <div id="sub">tap / drag / long-press<br>静かな粒子と光の核が、触れ方で変わります</div>
-      </div>
-
-      <div id="buttons">
-        <button id="resetBtn" class="btn" type="button">Reset</button>
-      </div>
+  <div class="ui">
+    <div class="panel">
+      <div class="title">Touching Light — Quiet Luxury</div>
+      <div class="hint">tap / drag / long-press<br>静かな粒子と光の核が、触れ方で変わります</div>
     </div>
-
-    <div id="err"></div>
+    <div class="btns">
+      <button id="btnReset" type="button">Reset</button>
+    </div>
   </div>
 
-  <script>
-    // ==== On-screen error overlay ====
-    (function(){
-      const box = document.getElementById('err');
-      function show(msg){
-        box.style.display = 'block';
-        box.textContent = msg;
-      }
-      window.addEventListener('error', (e) => {
-        const m = [
-          'JavaScript error',
-          String(e.message || e.error || 'unknown'),
-          (e.filename ? `@ ${e.filename}:${e.lineno}:${e.colno}` : '')
-        ].filter(Boolean).join('\n');
-        show(m);
-      });
-      window.addEventListener('unhandledrejection', (e) => {
-        const m = [
-          'Promise rejection',
-          String(e.reason || 'unknown')
-        ].join('\n');
-        show(m);
-      });
-    })();
-  </script>
+  <!-- Cache buster: update value when you commit -->
+  <script src="./utils.js?v=20260215_1"></script>
+  <script src="./cfg.js?v=20260215_1"></script>
+  <script src="./field.js?v=20260215_1"></script>
+  <script src="./particles.js?v=20260215_1"></script>
+  <script src="./void_shadow.js?v=20260215_1"></script>
+  <script src="./render.js?v=20260215_1"></script>
+  <script src="./input.js?v=20260215_1"></script>
+  <script src="./sketch.js?v=20260215_1"></script>
 
-  <!-- ★重要：読み込み順（これが崩れると黒画面になりやすい） -->
-  <script src="./cfg.js"></script>
-  <script src="./utils.js"></script>
-  <script src="./input.js"></script>
-  <script src="./field.js"></script>
-  <script src="./void_shadow.js"></script>
-  <script src="./particles.js"></script>
-  <script src="./render.js"></script>
-  <script src="./sketch.js"></script>
+  <script>
+    // Reset button (works even if APP.reset isn't defined)
+    document.getElementById("btnReset").addEventListener("click", () => {
+      try {
+        if (window.APP && typeof window.APP.reset === "function") window.APP.reset();
+        if (window.Input && typeof window.Input.reset === "function") window.Input.reset();
+      } catch (e) {
+        console.error(e);
+      }
+    }, { passive: true });
+  </script>
 </body>
 </html>
