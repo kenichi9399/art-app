@@ -1,233 +1,248 @@
 // input.js
-// iOS Safari friendly input handler.
-// Exposes: window.Input
+// Touch / Drag / Long-press input manager (iPhone Safari safe)
+// - Does NOT depend on utils.js load order
+// - Provides window.U and U.v2 fallback to avoid "U.v2 is undefined" crashes
 
 (() => {
-  const U = window.U || {};
+  // ---------- Safe global namespace ----------
+  const G = (typeof window !== "undefined") ? window : globalThis;
+  G.U = G.U || {};
 
-  // フォールバック（念のため）
-  const v2 = U.v2 ? U.v2 : (x = 0, y = 0) => ({ x, y });
-  const clamp = U.clamp ? U.clamp : (n, a, b) => (n < a ? a : n > b ? b : n);
+  // v2 fallback (do NOT trust existing U.v2 unless it's a function)
+  const v2 = (typeof G.U.v2 === "function")
+    ? G.U.v2
+    : function (x = 0, y = 0) { return { x, y }; };
 
-  class Input {
-    constructor(canvas) {
-      this.canvas = canvas;
+  // expose fallback back to U so other modules can rely on it
+  if (typeof G.U.v2 !== "function") G.U.v2 = v2;
 
-      // pointer state (CSS px coords in canvas space)
-      this.pos = v2(0, 0);
-      this.prev = v2(0, 0);
-      this.delta = v2(0, 0);
+  // small helpers (local, no dependency)
+  const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+  const now = () => (G.performance && performance.now) ? performance.now() : Date.now();
 
-      this.isDown = false;
-      this.justDown = false;
-      this.justUp = false;
+  // ---------- Input State ----------
+  const state = {
+    // normalized pointer (canvas space set later)
+    x: 0,
+    y: 0,
+    dx: 0,
+    dy: 0,
 
-      // interaction semantics
-      this.tap = false;
-      this.dragging = false;
-      this.dragDist = 0;
+    // flags
+    down: false,
+    moved: false,
+    longPress: false,
 
-      this.hold = false;        // long-press active
-      this.holdTime = 0;        // seconds
-      this.holdThreshold = 0.32;// seconds
+    // timing
+    tDown: 0,
+    tLast: 0,
 
-      this.pointerId = null;
+    // gesture interpretation
+    // tap: short press without much move
+    // drag: down + move
+    // longPress: hold > threshold
+    isTap: false,
 
-      // internal
-      this._downPos = v2(0, 0);
-      this._moved = 0;
-      this._lastTS = performance.now();
+    // smoothing
+    _lastX: 0,
+    _lastY: 0,
 
-      this._bind();
+    // device/canvas mapping
+    _canvas: null,
+    _rect: null,
+    _dpr: 1,
+
+    // config
+    LONG_MS: 320,
+    TAP_MAX_MS: 220,
+    MOVE_PX: 8, // in CSS pixels
+  };
+
+  function setCanvas(canvas, dpr = 1) {
+    state._canvas = canvas;
+    state._dpr = dpr || 1;
+    refreshRect();
+  }
+
+  function refreshRect() {
+    if (!state._canvas) return;
+    state._rect = state._canvas.getBoundingClientRect();
+  }
+
+  // Convert client coords -> canvas coords (pixel space)
+  function toCanvasXY(clientX, clientY) {
+    const r = state._rect || (state._canvas ? state._canvas.getBoundingClientRect() : { left: 0, top: 0 });
+    const x = (clientX - r.left) * state._dpr;
+    const y = (clientY - r.top) * state._dpr;
+    return v2(x, y);
+  }
+
+  function onDown(clientX, clientY) {
+    if (!state._canvas) return;
+
+    refreshRect();
+    const p = toCanvasXY(clientX, clientY);
+
+    state.down = true;
+    state.moved = false;
+    state.longPress = false;
+    state.isTap = false;
+
+    state.tDown = now();
+    state.tLast = state.tDown;
+
+    state._lastX = p.x;
+    state._lastY = p.y;
+
+    state.x = p.x;
+    state.y = p.y;
+    state.dx = 0;
+    state.dy = 0;
+  }
+
+  function onMove(clientX, clientY) {
+    if (!state._canvas) return;
+
+    refreshRect();
+    const p = toCanvasXY(clientX, clientY);
+
+    const ddx = p.x - state._lastX;
+    const ddy = p.y - state._lastY;
+
+    // movement threshold in CSS px -> convert to canvas px by *dpr
+    const moveThresh = state.MOVE_PX * state._dpr;
+    if (!state.moved && (Math.abs(p.x - state.x) + Math.abs(p.y - state.y)) > moveThresh) {
+      state.moved = true;
     }
 
-    reset() {
-      this.isDown = this.justDown = this.justUp = false;
-      this.tap = this.dragging = false;
-      this.dragDist = 0;
-      this.hold = false;
-      this.holdTime = 0;
-      this.pointerId = null;
-      this._moved = 0;
-      this._lastTS = performance.now();
-    }
+    state._lastX = p.x;
+    state._lastY = p.y;
 
-    // optional if field/ps wants dt-driven update
-    update(dt) {
-      // one-frame flags reset here
-      this.tap = false;
-      this.justDown = false;
-      this.justUp = false;
+    state.dx = ddx;
+    state.dy = ddy;
+    state.x = p.x;
+    state.y = p.y;
+    state.tLast = now();
+  }
 
-      if (this.isDown) {
-        this.holdTime += dt;
-        if (!this.hold && this.holdTime >= this.holdThreshold && !this.dragging) {
-          this.hold = true;
-        }
-      } else {
-        this.hold = false;
-        this.holdTime = 0;
-      }
-    }
+  function onUp() {
+    if (!state._canvas) return;
 
-    _canvasToLocal(clientX, clientY) {
-      const r = this.canvas.getBoundingClientRect();
-      const x = clientX - r.left;
-      const y = clientY - r.top;
-      return v2(x, y);
-    }
+    const tUp = now();
+    const held = tUp - state.tDown;
 
-    _setPos(p) {
-      this.prev.x = this.pos.x; this.prev.y = this.pos.y;
-      this.pos.x = p.x; this.pos.y = p.y;
-      this.delta.x = this.pos.x - this.prev.x;
-      this.delta.y = this.pos.y - this.prev.y;
-      this.dragDist += Math.sqrt(this.delta.x * this.delta.x + this.delta.y * this.delta.y);
-    }
+    // tap = short + not moved
+    state.isTap = (held <= state.TAP_MAX_MS) && (!state.moved);
 
-    _onDown(p, pointerId) {
-      this.isDown = true;
-      this.justDown = true;
-      this.justUp = false;
-      this.tap = false;
+    state.down = false;
+    state.longPress = false;
+    state.tLast = tUp;
+  }
 
-      this.dragging = false;
-      this.dragDist = 0;
-
-      this.hold = false;
-      this.holdTime = 0;
-
-      this.pointerId = pointerId ?? this.pointerId;
-
-      this._downPos.x = p.x; this._downPos.y = p.y;
-      this._moved = 0;
-      this._setPos(p);
-      this._lastTS = performance.now();
-    }
-
-    _onMove(p) {
-      this._setPos(p);
-
-      const dx = this.pos.x - this._downPos.x;
-      const dy = this.pos.y - this._downPos.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      this._moved = dist;
-
-      // drag threshold (finger jitter tolerant)
-      if (this.isDown && !this.dragging && dist >= 6) {
-        this.dragging = true;
-        this.hold = false; // drag優先
-      }
-    }
-
-    _onUp(p) {
-      // final move
-      this._setPos(p);
-
-      this.isDown = false;
-      this.justUp = true;
-
-      // tap 判定：ほぼ動いてない + holdしてない
-      if (!this.dragging && !this.hold && this._moved < 8) {
-        this.tap = true;
-      }
-
-      this.dragging = false;
-      this.hold = false;
-      this.holdTime = 0;
-      this.pointerId = null;
-    }
-
-    _bind() {
-      const c = this.canvas;
-
-      // iOS: スクロール/ズームに取られないようにする
-      // （index.htmlでも touch-action:none を入れているが二重で安全）
-      c.style.touchAction = 'none';
-
-      // pointer events if available
-      const hasPointer = 'PointerEvent' in window;
-
-      if (hasPointer) {
-        c.addEventListener('pointerdown', (e) => {
-          e.preventDefault();
-          c.setPointerCapture?.(e.pointerId);
-          const p = this._canvasToLocal(e.clientX, e.clientY);
-          this._onDown(p, e.pointerId);
-        }, { passive: false });
-
-        c.addEventListener('pointermove', (e) => {
-          // capture中のみ追う
-          if (!this.isDown) return;
-          e.preventDefault();
-          const p = this._canvasToLocal(e.clientX, e.clientY);
-          this._onMove(p);
-        }, { passive: false });
-
-        c.addEventListener('pointerup', (e) => {
-          e.preventDefault();
-          const p = this._canvasToLocal(e.clientX, e.clientY);
-          this._onUp(p);
-        }, { passive: false });
-
-        c.addEventListener('pointercancel', (e) => {
-          e.preventDefault();
-          const p = this._canvasToLocal(e.clientX, e.clientY);
-          this._onUp(p);
-        }, { passive: false });
-
-      } else {
-        // Touch fallback
-        c.addEventListener('touchstart', (e) => {
-          e.preventDefault();
-          const t = e.changedTouches[0];
-          const p = this._canvasToLocal(t.clientX, t.clientY);
-          this._onDown(p, 'touch');
-        }, { passive: false });
-
-        c.addEventListener('touchmove', (e) => {
-          if (!this.isDown) return;
-          e.preventDefault();
-          const t = e.changedTouches[0];
-          const p = this._canvasToLocal(t.clientX, t.clientY);
-          this._onMove(p);
-        }, { passive: false });
-
-        c.addEventListener('touchend', (e) => {
-          e.preventDefault();
-          const t = e.changedTouches[0];
-          const p = this._canvasToLocal(t.clientX, t.clientY);
-          this._onUp(p);
-        }, { passive: false });
-
-        c.addEventListener('touchcancel', (e) => {
-          e.preventDefault();
-          const t = e.changedTouches[0] || { clientX: 0, clientY: 0 };
-          const p = this._canvasToLocal(t.clientX, t.clientY);
-          this._onUp(p);
-        }, { passive: false });
-
-        // Mouse fallback
-        c.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          const p = this._canvasToLocal(e.clientX, e.clientY);
-          this._onDown(p, 'mouse');
-        }, { passive: false });
-
-        window.addEventListener('mousemove', (e) => {
-          if (!this.isDown) return;
-          const p = this._canvasToLocal(e.clientX, e.clientY);
-          this._onMove(p);
-        }, { passive: true });
-
-        window.addEventListener('mouseup', (e) => {
-          if (!this.isDown) return;
-          const p = this._canvasToLocal(e.clientX, e.clientY);
-          this._onUp(p);
-        }, { passive: true });
-      }
+  // long-press detection (call each frame)
+  function update() {
+    if (!state.down) return;
+    const t = now();
+    if (!state.longPress && (t - state.tDown) >= state.LONG_MS && !state.moved) {
+      state.longPress = true;
     }
   }
 
-  window.Input = Input;
+  function reset() {
+    state.down = false;
+    state.moved = false;
+    state.longPress = false;
+    state.isTap = false;
+    state.dx = 0;
+    state.dy = 0;
+  }
+
+  // ---------- DOM Event wiring ----------
+  function bind(canvas) {
+    setCanvas(canvas, state._dpr || 1);
+
+    // IMPORTANT: iOS Safari needs {passive:false} if we call preventDefault()
+    const opts = { passive: false };
+
+    // pointer events (best) + touch fallback
+    const hasPointer = "PointerEvent" in G;
+
+    const stop = (e) => {
+      // prevent scroll / rubber-band while interacting with canvas
+      if (e && typeof e.preventDefault === "function") e.preventDefault();
+    };
+
+    const getPrimary = (e) => {
+      if (e.touches && e.touches.length) return e.touches[0];
+      if (e.changedTouches && e.changedTouches.length) return e.changedTouches[0];
+      return e;
+    };
+
+    if (hasPointer) {
+      canvas.addEventListener("pointerdown", (e) => {
+        stop(e);
+        canvas.setPointerCapture?.(e.pointerId);
+        onDown(e.clientX, e.clientY);
+      }, opts);
+
+      canvas.addEventListener("pointermove", (e) => {
+        if (!state.down) return;
+        stop(e);
+        onMove(e.clientX, e.clientY);
+      }, opts);
+
+      canvas.addEventListener("pointerup", (e) => {
+        stop(e);
+        onUp();
+      }, opts);
+
+      canvas.addEventListener("pointercancel", (e) => {
+        stop(e);
+        onUp();
+      }, opts);
+    } else {
+      // touch fallback
+      canvas.addEventListener("touchstart", (e) => {
+        stop(e);
+        const p = getPrimary(e);
+        onDown(p.clientX, p.clientY);
+      }, opts);
+
+      canvas.addEventListener("touchmove", (e) => {
+        stop(e);
+        if (!state.down) return;
+        const p = getPrimary(e);
+        onMove(p.clientX, p.clientY);
+      }, opts);
+
+      canvas.addEventListener("touchend", (e) => {
+        stop(e);
+        onUp();
+      }, opts);
+
+      canvas.addEventListener("touchcancel", (e) => {
+        stop(e);
+        onUp();
+      }, opts);
+
+      // mouse (desktop)
+      canvas.addEventListener("mousedown", (e) => onDown(e.clientX, e.clientY));
+      G.addEventListener("mousemove", (e) => { if (state.down) onMove(e.clientX, e.clientY); });
+      G.addEventListener("mouseup", () => onUp());
+    }
+
+    // keep rect fresh
+    G.addEventListener("resize", () => refreshRect(), { passive: true });
+    G.addEventListener("scroll", () => refreshRect(), { passive: true });
+  }
+
+  // ---------- Export ----------
+  G.Input = {
+    state,
+    bind,
+    setCanvas,
+    refreshRect,
+    update,
+    reset,
+  };
 })();
