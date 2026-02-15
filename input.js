@@ -1,109 +1,156 @@
-// input.js  (canvas専用・ボタンを潰さない・iOS Safari安定版)
+// input.js
 (() => {
-  const U = (window.U = window.U || {});
-  if (typeof U.v2 !== "function") U.v2 = (x = 0, y = 0) => ({ x, y });
-
-  const CFG = window.CFG || {};
+  const U = window.U;
 
   const INPUT = (window.INPUT = {
+    ready: false,
+
+    // pointer state
     down: false,
+    justDown: false,
+    justUp: false,
     dragging: false,
-    longPress: false,
+
     id: null,
     p: U.v2(0, 0),
     prev: U.v2(0, 0),
     v: U.v2(0, 0),
-    tDown: 0,
-    moved: 0,
+
+    downAt: 0,
+    longPress: false,
+
+    carve: U.v2(0, 0),
+
+    // ✅ タップを「フレーム跨ぎで保持」する
+    tapImpulse: 0,           // 0 or 1
+    tapPos: U.v2(0, 0),      // タップ確定位置
+    tapTime: 0,              // タップ確定時刻（保険）
+
+    canvas: null,
   });
 
-  const canvas = document.getElementById("c");
-
-  function setPos(x, y) {
-    INPUT.prev.x = INPUT.p.x;
-    INPUT.prev.y = INPUT.p.y;
-    INPUT.p.x = x;
-    INPUT.p.y = y;
-    INPUT.v.x = INPUT.p.x - INPUT.prev.x;
-    INPUT.v.y = INPUT.p.y - INPUT.prev.y;
-  }
-
-  function getTouchById(touches) {
-    if (!touches || touches.length === 0) return null;
-    if (INPUT.id == null) return touches[0];
-    for (let i = 0; i < touches.length; i++) {
-      const id = touches[i].identifier ?? "mouse";
-      if (id === INPUT.id) return touches[i];
-    }
-    return touches[0];
+  function getPos(e, canvas) {
+    const r = canvas.getBoundingClientRect();
+    return U.v2(e.clientX - r.left, e.clientY - r.top);
   }
 
   function onDown(e) {
-    // ✅ canvas上の入力だけ扱う（ボタン/パネルを潰さない）
-    // （canvasにしかリスナー付けてないが、保険）
-    if (e.target !== canvas) return;
+    const c = INPUT.canvas;
+    if (!c) return;
 
     if (e.cancelable) e.preventDefault();
 
-    const t = (e.touches && e.touches[0]) || e;
     INPUT.down = true;
+    INPUT.justDown = true;
+    INPUT.justUp = false;
     INPUT.dragging = false;
-    INPUT.longPress = false;
-    INPUT.id = t.identifier ?? "mouse";
-    INPUT.tDown = U.now();
-    INPUT.moved = 0;
 
-    setPos(t.clientX, t.clientY);
+    INPUT.id = e.pointerId ?? "mouse";
+    INPUT.downAt = U.now();
+    INPUT.longPress = false;
+
+    const pos = getPos(e, c);
+    INPUT.p = pos;
+    INPUT.prev = U.v2(pos.x, pos.y);
+    INPUT.v = U.v2(0, 0);
+    INPUT.carve = U.v2(0, 0);
+
+    try { c.setPointerCapture?.(e.pointerId); } catch {}
   }
 
   function onMove(e) {
-    if (!INPUT.down) return;
-    if (e.target !== canvas) return;
+    const c = INPUT.canvas;
+    if (!c) return;
 
     if (e.cancelable) e.preventDefault();
 
-    let t = null;
-    if (e.touches) t = getTouchById(e.touches);
-    else t = e;
+    const pos = getPos(e, c);
 
-    const dx = t.clientX - INPUT.p.x;
-    const dy = t.clientY - INPUT.p.y;
-    INPUT.moved += Math.abs(dx) + Math.abs(dy);
+    if (INPUT.down) {
+      const dx = pos.x - INPUT.p.x;
+      const dy = pos.y - INPUT.p.y;
 
-    setPos(t.clientX, t.clientY);
+      INPUT.prev = U.v2(INPUT.p.x, INPUT.p.y);
+      INPUT.p = pos;
+      INPUT.v = U.v2(dx, dy);
+      INPUT.carve = U.v2(dx, dy);
 
-    if (INPUT.moved > 6) INPUT.dragging = true;
+      if (!INPUT.dragging) {
+        if ((dx * dx + dy * dy) > 3.0) INPUT.dragging = true;
+      }
+    } else {
+      INPUT.prev = U.v2(INPUT.p.x, INPUT.p.y);
+      INPUT.p = pos;
+      INPUT.v = U.v2(0, 0);
+      INPUT.carve = U.v2(0, 0);
+    }
   }
 
   function onUp(e) {
-    if (e.target !== canvas) return;
+    const c = INPUT.canvas;
+    if (!c) return;
+
     if (e.cancelable) e.preventDefault();
 
+    const wasDown = INPUT.down;
     INPUT.down = false;
+    INPUT.justUp = true;
+
+    if (wasDown) {
+      const held = U.now() - INPUT.downAt;
+
+      // down中の移動量（ドラッグ判定）
+      // ※ drag中ならタップにしない
+      if (held < 260 && !INPUT.dragging) {
+        // ✅ “タップ確定”：次のフレームで必ず拾えるよう保持
+        INPUT.tapImpulse = 1;
+        INPUT.tapPos = U.v2(INPUT.p.x, INPUT.p.y);
+        INPUT.tapTime = U.now();
+      }
+    }
+
     INPUT.dragging = false;
-    INPUT.longPress = false;
     INPUT.id = null;
   }
 
-  // long press判定（毎フレーム呼ぶ）
-  INPUT.tick = function () {
-    if (!INPUT.down) return;
-    const t = U.now() - INPUT.tDown;
-    if (!INPUT.longPress && t > (CFG.LONGPRESS_MS ?? 240) && !INPUT.dragging) {
-      INPUT.longPress = true;
+  INPUT.tick = function tick() {
+    // 長押し判定
+    if (INPUT.down) {
+      const held = U.now() - INPUT.downAt;
+      if (!INPUT.longPress && held >= window.CFG.LONG_PRESS_MS) {
+        INPUT.longPress = true;
+      }
+    } else {
+      INPUT.longPress = false;
     }
+
+    // justDown/justUpは1フレームで落とす
+    INPUT.justDown = false;
+    INPUT.justUp = false;
+
+    // ✅ tapImpulse はここで消さない（sketchが消費する）
   };
 
-  // ✅ iOS Safari: passive:false で preventDefault を有効に
-  const opt = { passive: false };
+  INPUT.consumeTap = function consumeTap() {
+    INPUT.tapImpulse = 0;
+  };
 
-  // ✅ canvasにだけ付ける（windowには付けない）
-  canvas.addEventListener("touchstart", onDown, opt);
-  canvas.addEventListener("touchmove", onMove, opt);
-  canvas.addEventListener("touchend", onUp, opt);
-  canvas.addEventListener("touchcancel", onUp, opt);
+  INPUT.attach = function attach(canvas) {
+    INPUT.canvas = canvas;
+    INPUT.ready = true;
 
-  canvas.addEventListener("mousedown", onDown, opt);
-  window.addEventListener("mousemove", onMove, opt); // マウスは画面外に出るのでwindowで追う
-  window.addEventListener("mouseup", onUp, opt);
+    canvas.style.touchAction = "none";
+
+    canvas.addEventListener("pointerdown", onDown, { passive: false });
+    canvas.addEventListener("pointermove", onMove, { passive: false });
+    canvas.addEventListener("pointerup", onUp, { passive: false });
+    canvas.addEventListener("pointercancel", onUp, { passive: false });
+
+    // ページ側のスクロール奪取を抑止（保険）
+    document.addEventListener(
+      "touchmove",
+      (e) => { if (e.cancelable) e.preventDefault(); },
+      { passive: false }
+    );
+  };
 })();
