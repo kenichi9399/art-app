@@ -1,9 +1,9 @@
-// input.js
+// input.js  (canvas専用・ボタンを潰さない・iOS Safari安定版)
 (() => {
   const U = (window.U = window.U || {});
   if (typeof U.v2 !== "function") U.v2 = (x = 0, y = 0) => ({ x, y });
 
-  const CFG = window.CFG;
+  const CFG = window.CFG || {};
 
   const INPUT = (window.INPUT = {
     down: false,
@@ -17,7 +17,9 @@
     moved: 0,
   });
 
-  function setPos(e, x, y) {
+  const canvas = document.getElementById("c");
+
+  function setPos(x, y) {
     INPUT.prev.x = INPUT.p.x;
     INPUT.prev.y = INPUT.p.y;
     INPUT.p.x = x;
@@ -26,8 +28,21 @@
     INPUT.v.y = INPUT.p.y - INPUT.prev.y;
   }
 
+  function getTouchById(touches) {
+    if (!touches || touches.length === 0) return null;
+    if (INPUT.id == null) return touches[0];
+    for (let i = 0; i < touches.length; i++) {
+      const id = touches[i].identifier ?? "mouse";
+      if (id === INPUT.id) return touches[i];
+    }
+    return touches[0];
+  }
+
   function onDown(e) {
-    // iOS Safariのスクロール/ズーム抑止
+    // ✅ canvas上の入力だけ扱う（ボタン/パネルを潰さない）
+    // （canvasにしかリスナー付けてないが、保険）
+    if (e.target !== canvas) return;
+
     if (e.cancelable) e.preventDefault();
 
     const t = (e.touches && e.touches[0]) || e;
@@ -38,37 +53,32 @@
     INPUT.tDown = U.now();
     INPUT.moved = 0;
 
-    setPos(e, t.clientX, t.clientY);
+    setPos(t.clientX, t.clientY);
   }
 
   function onMove(e) {
     if (!INPUT.down) return;
+    if (e.target !== canvas) return;
+
     if (e.cancelable) e.preventDefault();
 
     let t = null;
-    if (e.touches) {
-      for (let i = 0; i < e.touches.length; i++) {
-        if ((e.touches[i].identifier ?? "mouse") === INPUT.id) {
-          t = e.touches[i];
-          break;
-        }
-      }
-      if (!t) t = e.touches[0];
-    } else {
-      t = e;
-    }
+    if (e.touches) t = getTouchById(e.touches);
+    else t = e;
 
     const dx = t.clientX - INPUT.p.x;
     const dy = t.clientY - INPUT.p.y;
     INPUT.moved += Math.abs(dx) + Math.abs(dy);
 
-    setPos(e, t.clientX, t.clientY);
+    setPos(t.clientX, t.clientY);
 
     if (INPUT.moved > 6) INPUT.dragging = true;
   }
 
   function onUp(e) {
+    if (e.target !== canvas) return;
     if (e.cancelable) e.preventDefault();
+
     INPUT.down = false;
     INPUT.dragging = false;
     INPUT.longPress = false;
@@ -79,19 +89,21 @@
   INPUT.tick = function () {
     if (!INPUT.down) return;
     const t = U.now() - INPUT.tDown;
-    if (!INPUT.longPress && t > (CFG?.LONGPRESS_MS ?? 240) && !INPUT.dragging) {
+    if (!INPUT.longPress && t > (CFG.LONGPRESS_MS ?? 240) && !INPUT.dragging) {
       INPUT.longPress = true;
     }
   };
 
+  // ✅ iOS Safari: passive:false で preventDefault を有効に
   const opt = { passive: false };
 
-  window.addEventListener("touchstart", onDown, opt);
-  window.addEventListener("touchmove", onMove, opt);
-  window.addEventListener("touchend", onUp, opt);
-  window.addEventListener("touchcancel", onUp, opt);
+  // ✅ canvasにだけ付ける（windowには付けない）
+  canvas.addEventListener("touchstart", onDown, opt);
+  canvas.addEventListener("touchmove", onMove, opt);
+  canvas.addEventListener("touchend", onUp, opt);
+  canvas.addEventListener("touchcancel", onUp, opt);
 
-  window.addEventListener("mousedown", onDown, opt);
-  window.addEventListener("mousemove", onMove, opt);
+  canvas.addEventListener("mousedown", onDown, opt);
+  window.addEventListener("mousemove", onMove, opt); // マウスは画面外に出るのでwindowで追う
   window.addEventListener("mouseup", onUp, opt);
 })();
