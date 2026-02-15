@@ -1,48 +1,55 @@
 // void_shadow.js
-(function(){
+(() => {
   class VoidShadow {
-    constructor(){
-      this.canvas = document.createElement('canvas');
-      this.ctx = this.canvas.getContext('2d', { alpha: true });
-      this.w = 0; this.h = 0; this.dpr = 1;
+    constructor(w, h) {
+      this.resize(w,h);
     }
-    resize(w,h,dpr){
-      this.w=w; this.h=h; this.dpr=dpr;
-      this.canvas.width = Math.floor(w*dpr);
-      this.canvas.height = Math.floor(h*dpr);
-      this.redraw();
+
+    resize(w,h) {
+      this.w = w; this.h = h;
+      this.noiseSeed = Math.random() * 9999;
     }
-    redraw(){
-      const ctx=this.ctx;
-      const W=this.canvas.width, H=this.canvas.height;
-      ctx.clearRect(0,0,W,H);
+
+    draw(ctx) {
+      const w = this.w, h = this.h;
 
       // vignette
-      const g = ctx.createRadialGradient(W*0.5,H*0.45,Math.min(W,H)*0.08, W*0.5,H*0.5, Math.max(W,H)*0.62);
-      g.addColorStop(0,'rgba(0,0,0,0)');
-      g.addColorStop(1,'rgba(0,0,0,0.72)');
-      ctx.fillStyle=g;
-      ctx.fillRect(0,0,W,H);
+      const g = ctx.createRadialGradient(
+        w*0.5, h*0.48, Math.min(w,h)*0.08,
+        w*0.5, h*0.52, Math.max(w,h)*0.72
+      );
+      const v = CFG.VIGNETTE;
+      g.addColorStop(0.0, `rgba(0,0,0,${0.0})`);
+      g.addColorStop(0.55, `rgba(0,0,0,${0.18*v})`);
+      g.addColorStop(1.0, `rgba(0,0,0,${0.62*v})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(0,0,w,h);
 
-      // grain (subtle)
-      const img = ctx.getImageData(0,0,W,H);
-      const d = img.data;
-      const a = CFG.BG_GRAIN;
-      for(let i=0;i<d.length;i+=4){
-        const r = (Math.random()-0.5)*255*a;
-        d[i]+=r; d[i+1]+=r; d[i+2]+=r;
-        d[i+3]=U.clamp(d[i+3],0,255);
+      // fog (subtle)
+      ctx.globalAlpha = CFG.FOG;
+      const g2 = ctx.createRadialGradient(
+        w*0.55, h*0.52, Math.min(w,h)*0.12,
+        w*0.55, h*0.52, Math.max(w,h)*0.95
+      );
+      g2.addColorStop(0.0, `rgba(80,90,120,0.10)`);
+      g2.addColorStop(1.0, `rgba(0,0,0,0.00)`);
+      ctx.fillStyle = g2;
+      ctx.fillRect(0,0,w,h);
+      ctx.globalAlpha = 1;
+
+      // grain (cheap)
+      const step = 8;
+      ctx.globalAlpha = 0.05;
+      ctx.fillStyle = `rgba(255,255,255,1)`;
+      for (let y=0; y<h; y+=step) {
+        for (let x=0; x<w; x+=step) {
+          const n = U.noise2((x+this.noiseSeed)*0.08, (y+this.noiseSeed)*0.08);
+          if (n > 0.78) ctx.fillRect(x, y, 1, 1);
+        }
       }
-      ctx.putImageData(img,0,0);
-    }
-    drawTo(ctx,w,h){
-      // draw in CSS pixel space
-      ctx.save();
-      ctx.globalCompositeOperation='source-over';
-      ctx.globalAlpha=1;
-      ctx.drawImage(this.canvas,0,0,this.canvas.width,this.canvas.height,0,0,w,h);
-      ctx.restore();
+      ctx.globalAlpha = 1;
     }
   }
+
   window.VoidShadow = VoidShadow;
 })();
