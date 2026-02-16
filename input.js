@@ -1,156 +1,148 @@
 // input.js
-(() => {
-  const U = window.U;
+(function () {
+  "use strict";
 
-  const INPUT = (window.INPUT = {
-    ready: false,
+  class Input {
+    constructor(canvas, handlers) {
+      this.canvas = canvas;
+      this.h = handlers;
 
-    // pointer state
-    down: false,
-    justDown: false,
-    justUp: false,
-    dragging: false,
+      this.isDown = false;
+      this.isDragging = false;
+      this.downT = 0;
+      this.lastX = 0;
+      this.lastY = 0;
 
-    id: null,
-    p: U.v2(0, 0),
-    prev: U.v2(0, 0),
-    v: U.v2(0, 0),
+      this.longPressFired = false;
+      this.longPressTimer = null;
 
-    downAt: 0,
-    longPress: false,
+      this._bind();
+    }
 
-    carve: U.v2(0, 0),
+    _posFromTouch(t) {
+      const rect = this.canvas.getBoundingClientRect();
+      return {
+        x: (t.clientX - rect.left),
+        y: (t.clientY - rect.top)
+      };
+    }
 
-    // ✅ タップを「フレーム跨ぎで保持」する
-    tapImpulse: 0,           // 0 or 1
-    tapPos: U.v2(0, 0),      // タップ確定位置
-    tapTime: 0,              // タップ確定時刻（保険）
+    _bind() {
+      // iOS Safari 安定優先：touchベースで組む（pointerは環境差がある）
+      this.canvas.addEventListener("touchstart", (e) => this._onTouchStart(e), { passive: false });
+      this.canvas.addEventListener("touchmove", (e) => this._onTouchMove(e), { passive: false });
+      this.canvas.addEventListener("touchend", (e) => this._onTouchEnd(e), { passive: false });
+      this.canvas.addEventListener("touchcancel", (e) => this._onTouchEnd(e), { passive: false });
 
-    canvas: null,
-  });
+      // デスクトップ用（任意）
+      this.canvas.addEventListener("mousedown", (e) => this._onMouseDown(e));
+      window.addEventListener("mousemove", (e) => this._onMouseMove(e));
+      window.addEventListener("mouseup", (e) => this._onMouseUp(e));
+    }
 
-  function getPos(e, canvas) {
-    const r = canvas.getBoundingClientRect();
-    return U.v2(e.clientX - r.left, e.clientY - r.top);
-  }
+    _startPress(x, y) {
+      this.isDown = true;
+      this.isDragging = false;
+      this.longPressFired = false;
+      this.downT = performance.now();
+      this.lastX = x;
+      this.lastY = y;
 
-  function onDown(e) {
-    const c = INPUT.canvas;
-    if (!c) return;
+      if (this.longPressTimer) clearTimeout(this.longPressTimer);
+      this.longPressTimer = setTimeout(() => {
+        if (!this.isDown) return;
+        this.longPressFired = true;
+        this.h.onLongPress?.(x, y);
+      }, 380);
+    }
 
-    if (e.cancelable) e.preventDefault();
+    _movePress(x, y) {
+      if (!this.isDown) return;
 
-    INPUT.down = true;
-    INPUT.justDown = true;
-    INPUT.justUp = false;
-    INPUT.dragging = false;
+      const dx = x - this.lastX;
+      const dy = y - this.lastY;
 
-    INPUT.id = e.pointerId ?? "mouse";
-    INPUT.downAt = U.now();
-    INPUT.longPress = false;
-
-    const pos = getPos(e, c);
-    INPUT.p = pos;
-    INPUT.prev = U.v2(pos.x, pos.y);
-    INPUT.v = U.v2(0, 0);
-    INPUT.carve = U.v2(0, 0);
-
-    try { c.setPointerCapture?.(e.pointerId); } catch {}
-  }
-
-  function onMove(e) {
-    const c = INPUT.canvas;
-    if (!c) return;
-
-    if (e.cancelable) e.preventDefault();
-
-    const pos = getPos(e, c);
-
-    if (INPUT.down) {
-      const dx = pos.x - INPUT.p.x;
-      const dy = pos.y - INPUT.p.y;
-
-      INPUT.prev = U.v2(INPUT.p.x, INPUT.p.y);
-      INPUT.p = pos;
-      INPUT.v = U.v2(dx, dy);
-      INPUT.carve = U.v2(dx, dy);
-
-      if (!INPUT.dragging) {
-        if ((dx * dx + dy * dy) > 3.0) INPUT.dragging = true;
+      // 小さすぎる揺れは無視（誤判定でタップが潰れるのを防ぐ）
+      if (!this.isDragging) {
+        const d2 = dx * dx + dy * dy;
+        if (d2 > 10) this.isDragging = true;
       }
-    } else {
-      INPUT.prev = U.v2(INPUT.p.x, INPUT.p.y);
-      INPUT.p = pos;
-      INPUT.v = U.v2(0, 0);
-      INPUT.carve = U.v2(0, 0);
+
+      this.h.onMove?.(x, y, dx, dy, this.isDragging);
+
+      this.lastX = x;
+      this.lastY = y;
+    }
+
+    _endPress(x, y) {
+      if (this.longPressTimer) clearTimeout(this.longPressTimer);
+      const now = performance.now();
+      const dt = now - this.downT;
+
+      const wasDragging = this.isDragging;
+      const wasLong = this.longPressFired;
+
+      this.isDown = false;
+      this.isDragging = false;
+
+      // long-press はすでに発火済み
+      if (wasLong) {
+        this.h.onUp?.(x, y);
+        return;
+      }
+
+      // drag
+      if (wasDragging) {
+        this.h.onDragEnd?.(x, y);
+        this.h.onUp?.(x, y);
+        return;
+      }
+
+      // tap
+      if (dt < 350) {
+        this.h.onTap?.(x, y);
+      }
+      this.h.onUp?.(x, y);
+    }
+
+    _onTouchStart(e) {
+      e.preventDefault();
+      if (!e.touches || e.touches.length === 0) return;
+      const p = this._posFromTouch(e.touches[0]);
+      this._startPress(p.x, p.y);
+    }
+
+    _onTouchMove(e) {
+      e.preventDefault();
+      if (!e.touches || e.touches.length === 0) return;
+      const p = this._posFromTouch(e.touches[0]);
+      this._movePress(p.x, p.y);
+    }
+
+    _onTouchEnd(e) {
+      e.preventDefault();
+      const rect = this.canvas.getBoundingClientRect();
+      const t = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
+      const x = t ? (t.clientX - rect.left) : this.lastX;
+      const y = t ? (t.clientY - rect.top) : this.lastY;
+      this._endPress(x, y);
+    }
+
+    _onMouseDown(e) {
+      const rect = this.canvas.getBoundingClientRect();
+      this._startPress(e.clientX - rect.left, e.clientY - rect.top);
+    }
+    _onMouseMove(e) {
+      if (!this.isDown) return;
+      const rect = this.canvas.getBoundingClientRect();
+      this._movePress(e.clientX - rect.left, e.clientY - rect.top);
+    }
+    _onMouseUp(e) {
+      if (!this.isDown) return;
+      const rect = this.canvas.getBoundingClientRect();
+      this._endPress(e.clientX - rect.left, e.clientY - rect.top);
     }
   }
 
-  function onUp(e) {
-    const c = INPUT.canvas;
-    if (!c) return;
-
-    if (e.cancelable) e.preventDefault();
-
-    const wasDown = INPUT.down;
-    INPUT.down = false;
-    INPUT.justUp = true;
-
-    if (wasDown) {
-      const held = U.now() - INPUT.downAt;
-
-      // down中の移動量（ドラッグ判定）
-      // ※ drag中ならタップにしない
-      if (held < 260 && !INPUT.dragging) {
-        // ✅ “タップ確定”：次のフレームで必ず拾えるよう保持
-        INPUT.tapImpulse = 1;
-        INPUT.tapPos = U.v2(INPUT.p.x, INPUT.p.y);
-        INPUT.tapTime = U.now();
-      }
-    }
-
-    INPUT.dragging = false;
-    INPUT.id = null;
-  }
-
-  INPUT.tick = function tick() {
-    // 長押し判定
-    if (INPUT.down) {
-      const held = U.now() - INPUT.downAt;
-      if (!INPUT.longPress && held >= window.CFG.LONG_PRESS_MS) {
-        INPUT.longPress = true;
-      }
-    } else {
-      INPUT.longPress = false;
-    }
-
-    // justDown/justUpは1フレームで落とす
-    INPUT.justDown = false;
-    INPUT.justUp = false;
-
-    // ✅ tapImpulse はここで消さない（sketchが消費する）
-  };
-
-  INPUT.consumeTap = function consumeTap() {
-    INPUT.tapImpulse = 0;
-  };
-
-  INPUT.attach = function attach(canvas) {
-    INPUT.canvas = canvas;
-    INPUT.ready = true;
-
-    canvas.style.touchAction = "none";
-
-    canvas.addEventListener("pointerdown", onDown, { passive: false });
-    canvas.addEventListener("pointermove", onMove, { passive: false });
-    canvas.addEventListener("pointerup", onUp, { passive: false });
-    canvas.addEventListener("pointercancel", onUp, { passive: false });
-
-    // ページ側のスクロール奪取を抑止（保険）
-    document.addEventListener(
-      "touchmove",
-      (e) => { if (e.cancelable) e.preventDefault(); },
-      { passive: false }
-    );
-  };
+  window.Input = Input;
 })();
