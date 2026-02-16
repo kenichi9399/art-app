@@ -1,205 +1,127 @@
-;(() => {
-  class Core {
-    constructor(x, y) {
-      this.p = U.v2(x, y);
-      this.v = U.v2(U.rand(-0.2, 0.2), U.rand(-0.2, 0.2));
-      this.mass = U.rand(1.0, 1.4);
-      this.r = U.rand(22, 34);
-      this.energy = 0.0;
-      this.alive = true;
-    }
-
-    step(dt, w, h) {
-      // ふわ漂う
-      this.v.x += U.rand(-1, 1) * CFG.CORE_WANDER * dt;
-      this.v.y += U.rand(-1, 1) * CFG.CORE_WANDER * dt;
-
-      this.v.x *= 0.98;
-      this.v.y *= 0.98;
-
-      this.p.x += this.v.x * 60 * dt;
-      this.p.y += this.v.y * 60 * dt;
-
-      // 端で反射（やわらかく）
-      const m = 40;
-      if (this.p.x < m) { this.p.x = m; this.v.x *= -0.7; }
-      if (this.p.x > w - m) { this.p.x = w - m; this.v.x *= -0.7; }
-      if (this.p.y < m) { this.p.y = m; this.v.y *= -0.7; }
-      if (this.p.y > h - m) { this.p.y = h - m; this.v.y *= -0.7; }
-
-      this.energy *= 0.94;
-    }
-  }
-
-  class Particle {
-    constructor(w, h) {
-      this.p = U.v2(U.rand(0, w), U.rand(0, h));
-      this.v = U.v2(0, 0);
-
-      // 粒径：霧(小)〜硬い粒(大)を混在
-      const t = Math.pow(Math.random(), 1.8); // 小粒に寄せる
-      this.r = U.lerp(CFG.R_MIN, CFG.R_MAX, t);
-
-      this.hard = (Math.random() < CFG.R_HARD_CENTER_BIAS);
-
-      // 明るさ：白飛びガードのため上限を作る
-      this.a = U.lerp(0.05, 0.70, Math.pow(Math.random(), 1.2));
-      if (this.hard) this.a = Math.min(0.85, this.a + 0.10);
-    }
-  }
+// particles.js
+(() => {
+  "use strict";
 
   class Particles {
     constructor(w, h) {
-      this.resize(w, h);
-      this.reset();
+      this.reset(w, h);
     }
 
-    resize(w, h) {
-      this.w = w; this.h = h;
+    _computeCount(w, h, dpr) {
+      // 端末・画面サイズで自動調整（安全側）
+      const area = (w * h) / (dpr * dpr);
+      const base = CFG.PARTICLE_COUNT_BASE;
+      const scaled = base * (area / (800 * 1400)); // iPhone縦長基準
+      const n = Math.max(2400, Math.min(9000, (scaled * CFG.PARTICLE_COUNT_MUL) | 0));
+      return n;
     }
 
-    reset() {
-      // cores: 2〜3個が合体していく
-      const n = CFG.CORE_COUNT;
-      this.cores = [];
-      const cx = this.w * 0.55;
-      const cy = this.h * 0.45;
-      for (let i = 0; i < n; i++) {
-        this.cores.push(new Core(
-          cx + U.rand(-120, 120),
-          cy + U.rand(-120, 120)
-        ));
-      }
+    reset(w, h, dpr = 1) {
+      this.w = w;
+      this.h = h;
+      this.n = this._computeCount(w, h, dpr);
 
-      // particles
-      const count = Math.floor(CFG.COUNT_BASE * CFG.COUNT_MULT);
-      this.ps = new Array(count);
-      for (let i = 0; i < count; i++) this.ps[i] = new Particle(this.w, this.h);
+      this.x = new Float32Array(this.n);
+      this.y = new Float32Array(this.n);
+      this.vx = new Float32Array(this.n);
+      this.vy = new Float32Array(this.n);
+      this.s = new Float32Array(this.n);  // size
+      this.a = new Float32Array(this.n);  // alpha
 
-      this._tapFlash = 0;
-    }
+      // initial distribution: sparse fog + a little density band
+      for (let i = 0; i < this.n; i++) {
+        this.x[i] = Math.random() * w;
+        this.y[i] = Math.random() * h;
 
-    _mergeCores(dt) {
-      // 一番近いペアをゆっくり近づけて合体
-      let best = null;
-      let bestD = 1e9;
+        this.vx[i] = (Math.random() - 0.5) * 0.2;
+        this.vy[i] = (Math.random() - 0.5) * 0.2;
 
-      const alive = this.cores.filter(c => c.alive);
-      if (alive.length <= 1) return;
+        const t = U.randPow(CFG.SIZE_BIAS); // small-biased
+        this.s[i] = U.lerp(CFG.SIZE_MAX, CFG.SIZE_MIN, t);
 
-      for (let i = 0; i < alive.length; i++) {
-        for (let j = i + 1; j < alive.length; j++) {
-          const a = alive[i], b = alive[j];
-          const d = U.len(U.sub(b.p, a.p));
-          if (d < bestD) { bestD = d; best = [a, b]; }
-        }
-      }
-      if (!best) return;
-
-      const [a, b] = best;
-
-      // 近づける（常にわずかに引力）
-      const dir = U.sub(b.p, a.p);
-      const dist = U.len(dir);
-      const n = U.norm(dir);
-
-      const pull = CFG.CORE_MERGE_SPEED * 60 * dt;
-      a.v.x += n.x * pull;
-      a.v.y += n.y * pull;
-      b.v.x -= n.x * pull;
-      b.v.y -= n.y * pull;
-
-      // 合体判定
-      if (dist < CFG.CORE_MERGE_DIST) {
-        // bをaに吸収
-        a.mass += b.mass;
-        a.r = Math.min(64, a.r + b.r * 0.25);
-        a.energy = 1.0;
-        b.alive = false;
+        const at = U.clamp((CFG.SIZE_MAX - this.s[i]) / (CFG.SIZE_MAX - CFG.SIZE_MIN), 0, 1);
+        this.a[i] = U.lerp(CFG.OPACITY_MIN, CFG.OPACITY_MAX, at * 0.9 + Math.random() * 0.1);
       }
     }
 
-    step(dt, field, input) {
-      // コア更新
-      for (const c of this.cores) if (c.alive) c.step(dt, this.w, this.h);
-      this._mergeCores(dt);
-
-      // interaction
-      const hasTouch = input.down || input.longPress;
-      const tp = input.pos;
-
-      // tap: “白飛び”はさせず、局所的にエネルギーだけ上げる
-      if (input.down && input.justTapped) {
-        this._tapFlash = 1.0;
-        for (const c of this.cores) if (c.alive) c.energy = Math.max(c.energy, 0.35);
-      }
-      this._tapFlash *= 0.90;
-
-      // 粒子更新
+    step(field, cores, input) {
       const w = this.w, h = this.h;
+      const n = this.n;
 
-      for (let i = 0; i < this.ps.length; i++) {
-        const p = this.ps[i];
+      // core influence / gather
+      const gather = input.down && input.long;
+      const drag = input.down && input.dragging;
+      const tap = input.tap;
 
-        // field flow（ドラッグで彫られた流れ）
-        const f = field.sample(p.p.x, p.p.y);
-        p.v.x += f.x * 0.006;
-        p.v.y += f.y * 0.006;
+      // small tap impulse into field to avoid white flash
+      if (tap) {
+        field.inject(input.x, input.y, (Math.random() - 0.5), (Math.random() - 0.5), CFG.TAP_IMPULSE, CFG.HIT_RADIUS * 0.75);
+      }
 
-        // core attraction（核に集まる）
-        for (const c of this.cores) {
-          if (!c.alive) continue;
-          const d = U.sub(c.p, p.p);
-          const L = U.len(d) + 1e-6;
-          const n = U.mul(d, 1.0 / L);
+      for (let i = 0; i < n; i++) {
+        let x = this.x[i], y = this.y[i];
+        let vx = this.vx[i], vy = this.vy[i];
 
-          // 近いほど効く（硬い粒は強く引かれる）
-          const fall = 1.0 - U.smoothstep(0, c.r * 3.0, L);
-          const k = (p.hard ? 1.4 : 1.0) * fall;
+        // flow field
+        const f = field.sample(x, y);
+        vx += f.x * 0.55;
+        vy += f.y * 0.55;
 
-          p.v.x += n.x * k * 0.060;
-          p.v.y += n.y * k * 0.060;
+        // core attraction
+        for (const c of cores) {
+          const ox = c.x - x, oy = c.y - y;
+          const d2 = ox * ox + oy * oy + 120;
+          const inv = 1 / d2;
+
+          vx += ox * inv * CFG.CORE_ATTRACT;
+          vy += oy * inv * CFG.CORE_ATTRACT;
         }
 
-        // touch influence
-        if (hasTouch) {
-          const d = U.sub(tp, p.p);
-          const L = U.len(d) + 1e-6;
-          const n = U.mul(d, 1.0 / L);
-          const fall = 1.0 - U.smoothstep(0, CFG.TOUCH_RADIUS, L);
-
-          if (fall > 0) {
-            if (input.longPress) {
-              // 長押し：集める
-              const k = CFG.LONGPRESS_ATTRACT * fall * (p.hard ? 1.1 : 0.85);
-              p.v.x += n.x * k * 0.085;
-              p.v.y += n.y * k * 0.085;
-            } else if (input.down) {
-              // タップ/ドラッグ：局所的な揺れ（白飛びしない）
-              const k = CFG.TAP_IMPULSE * fall;
-              p.v.x += n.x * k * 0.020;
-              p.v.y += n.y * k * 0.020;
-            }
+        // user interactions: drag carves flow already in field, but also nudges particles
+        if (drag) {
+          const ox = x - input.x, oy = y - input.y;
+          const d2 = ox * ox + oy * oy;
+          if (d2 < CFG.HIT_RADIUS * CFG.HIT_RADIUS) {
+            const t = 1 - Math.sqrt(d2) / CFG.HIT_RADIUS;
+            const wgt = U.smoothstep(t) * CFG.DRAG_STRENGTH;
+            vx += (input.vx * 140) * wgt;
+            vy += (input.vy * 140) * wgt;
           }
         }
 
-        // 漂い（細かい揺れ）
-        p.v.x += U.rand(-1, 1) * CFG.SPEED_BASE * 0.002;
-        p.v.y += U.rand(-1, 1) * CFG.SPEED_BASE * 0.002;
+        // long-press gather
+        if (gather) {
+          const ox = input.x - x, oy = input.y - y;
+          const d2 = ox * ox + oy * oy + 80;
+          if (d2 < (CFG.HIT_RADIUS * 1.25) ** 2) {
+            const inv = 1 / d2;
+            vx += ox * inv * CFG.GATHER_STRENGTH * 2.0;
+            vy += oy * inv * CFG.GATHER_STRENGTH * 2.0;
+          }
+        }
 
-        // 減衰
-        p.v.x *= CFG.DRAG;
-        p.v.y *= CFG.DRAG;
+        // integrate
+        const sp = Math.hypot(vx, vy);
+        if (sp > CFG.SPEED_LIMIT) {
+          const k = CFG.SPEED_LIMIT / (sp || 1);
+          vx *= k; vy *= k;
+        }
 
-        // 位置
-        p.p.x += p.v.x * (CFG.SPEED_DETAIL * 60 * dt);
-        p.p.y += p.v.y * (CFG.SPEED_DETAIL * 60 * dt);
+        x += vx;
+        y += vy;
 
-        // wrap（端で消えない）
-        if (p.p.x < 0) p.p.x += w;
-        if (p.p.x >= w) p.p.x -= w;
-        if (p.p.y < 0) p.p.y += h;
-        if (p.p.y >= h) p.p.y -= h;
+        // wrap around edges (seamless)
+        if (x < -20) x += w + 40;
+        if (x > w + 20) x -= w + 40;
+        if (y < -20) y += h + 40;
+        if (y > h + 20) y -= h + 40;
+
+        // damping
+        vx *= 0.975;
+        vy *= 0.975;
+
+        this.x[i] = x; this.y[i] = y;
+        this.vx[i] = vx; this.vy[i] = vy;
       }
     }
   }
