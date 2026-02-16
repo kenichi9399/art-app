@@ -2,111 +2,301 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#000000" />
   <title>Touching Light — Quiet Luxury</title>
+
   <style>
-    html, body {
-      margin: 0; padding: 0;
-      width: 100%; height: 100%;
-      background: #000;
-      overflow: hidden;
-      font-family: ui-serif, Georgia, "Times New Roman", serif;
+    :root{
+      --bg:#000;
+      --ui: rgba(18,18,22,0.52);
+      --ui2: rgba(255,255,255,0.06);
+      --txt: rgba(255,255,255,0.92);
+      --txt2: rgba(255,255,255,0.72);
+      --txt3: rgba(255,255,255,0.52);
     }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--bg);
+      overflow: hidden;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      font-family: ui-serif, "Times New Roman", serif;
+    }
+
+    /* canvas full-bleed */
     #c {
       position: fixed;
       inset: 0;
-      width: 100vw; height: 100vh;
+      width: 100vw;
+      height: 100vh;
       display: block;
       background: #000;
-      touch-action: none;
     }
+
+    /* HUD wrapper */
     .hud {
       position: fixed;
-      left: 14px;
-      top: 14px;
-      right: 14px;
+      left: 12px;
+      top: 12px;
+      right: 12px;
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
-      gap: 12px;
-      pointer-events: none; /* HUD自体は基本的に透過、ボタンだけ有効 */
+      gap: 10px;
+      pointer-events: none;
+      z-index: 10;
+      padding-top: env(safe-area-inset-top);
     }
+
+    /* Description panel (default hidden) */
     .panel {
       pointer-events: none;
-      max-width: 68vw;
-      padding: 18px 18px 14px 18px;
-      border-radius: 22px;
-      background: rgba(18, 18, 22, 0.58);
-      border: 1px solid rgba(255,255,255,0.06);
+      max-width: min(64vw, 520px);
+      padding: 12px 12px 10px 12px;
+      border-radius: 18px;
+      background: var(--ui);
+      border: 1px solid var(--ui2);
       box-shadow: 0 10px 30px rgba(0,0,0,0.35);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
-      color: rgba(255,255,255,0.92);
+      color: var(--txt);
+
+      opacity: 0;
+      transform: translateY(-6px);
+      transition: opacity 200ms ease, transform 200ms ease;
     }
+    .panel.open {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
     .title {
-      font-size: 44px;
+      font-size: 22px;
       line-height: 1.05;
-      letter-spacing: 0.3px;
-      margin: 0 0 8px 0;
+      letter-spacing: 0.2px;
+      margin: 0 0 6px 0;
+      font-weight: 700;
     }
     .sub {
       margin: 0;
       font-family: ui-sans-serif, -apple-system, system-ui;
-      font-size: 18px;
+      font-size: 14px;
       letter-spacing: 0.2px;
-      color: rgba(255,255,255,0.75);
+      color: var(--txt2);
     }
     .hint {
-      margin: 8px 0 0 0;
+      margin: 6px 0 0 0;
       font-family: ui-sans-serif, -apple-system, system-ui;
-      font-size: 15px;
-      color: rgba(255,255,255,0.55);
+      font-size: 12px;
+      color: var(--txt3);
     }
+
+    /* buttons */
     .buttons {
-      pointer-events: auto; /* ボタンだけ操作可能 */
+      pointer-events: auto;
       display: flex;
       gap: 10px;
       align-items: flex-start;
+      z-index: 11;
     }
+
     button {
       appearance: none;
-      border: 1px solid rgba(255,255,255,0.08);
-      background: rgba(18, 18, 22, 0.62);
-      color: rgba(255,255,255,0.9);
-      padding: 14px 16px;
+      -webkit-appearance: none;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(18,18,22,0.44);
+      color: rgba(255,255,255,0.92);
       border-radius: 18px;
-      font-family: ui-sans-serif, -apple-system, system-ui;
-      font-size: 18px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      padding: 12px 16px;
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: 0.2px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.30);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
     }
-    button:active {
-      transform: translateY(1px);
+    button:active { transform: scale(0.98); }
+
+    #btnInfo {
+      width: 44px;
+      padding: 12px 0;
+      text-align: center;
+      font-weight: 800;
+      opacity: 0.92;
+    }
+
+    /* error toast (optional) */
+    #err {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      padding-bottom: env(safe-area-inset-bottom);
+      z-index: 99;
+      pointer-events: none;
+      display: none;
+    }
+    #err .box{
+      pointer-events: auto;
+      background: rgba(120,0,0,0.55);
+      border: 1px solid rgba(255,120,120,0.35);
+      color: rgba(255,255,255,0.92);
+      border-radius: 18px;
+      padding: 12px 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    @media (max-width: 420px) {
+      .panel { max-width: 72vw; }
+      .title { font-size: 20px; }
+      button { font-size: 16px; }
     }
   </style>
 </head>
+
 <body>
   <canvas id="c"></canvas>
 
   <div class="hud">
-    <div class="panel">
+    <div id="hudPanel" class="panel">
       <h1 class="title">Touching Light — Quiet Luxury</h1>
       <p class="sub">tap / drag / long-press</p>
       <p class="hint">静かな粒子と光の核が、触れ方で変わります</p>
     </div>
+
     <div class="buttons">
-      <button id="btnReset" type="button">Reset</button>
+      <button id="btnInfo" aria-label="info">i</button>
+      <button id="btnReset">Reset</button>
     </div>
   </div>
 
-  <!-- 読み込み順が重要：CFG → U → Renderer → Input → Field → Particles → App -->
-  <script src="./cfg.js?v=1"></script>
-  <script src="./utils.js?v=1"></script>
-  <script src="./render.js?v=1"></script>
-  <script src="./input.js?v=1"></script>
-  <script src="./field.js?v=1"></script>
-  <script src="./particles.js?v=1"></script>
-  <script src="./sketch.js?v=1"></script>
+  <div id="err"><div class="box" id="errBox"></div></div>
+
+  <!--
+    読み込み順が超重要です（依存関係がある想定）
+    もしあなたの repo のファイル構成と違う場合は、その行だけ教えてください。
+  -->
+  <script src="./cfg.js?v=300"></script>
+  <script src="./utils.js?v=300"></script>
+  <script src="./field.js?v=300"></script>
+  <script src="./void_shadow.js?v=300"></script>
+  <script src="./particles.js?v=300"></script>
+  <script src="./render.js?v=300"></script>
+  <script src="./input.js?v=300"></script>
+  <script src="./sketch.js?v=300"></script>
+
+  <script>
+    // ---- Error toast (Safariでも目視できるように) ----
+    (function () {
+      const err = document.getElementById("err");
+      const errBox = document.getElementById("errBox");
+      window.addEventListener("error", (e) => {
+        try {
+          const msg = String(e && e.error ? e.error.stack || e.error.message : e.message || e);
+          errBox.textContent = "JavaScript error\n" + msg;
+          err.style.display = "block";
+        } catch (_) {}
+      });
+      window.addEventListener("unhandledrejection", (e) => {
+        try {
+          const msg = String(e && e.reason ? e.reason.stack || e.reason.message || e.reason : e);
+          errBox.textContent = "Promise rejection\n" + msg;
+          err.style.display = "block";
+        } catch (_) {}
+      });
+    })();
+
+    // ---- HUD (説明を邪魔にしない：iで表示、操作開始で自動で閉じる) ----
+    (function () {
+      const panel = document.getElementById("hudPanel");
+      const btnInfo = document.getElementById("btnInfo");
+      if (!panel || !btnInfo) return;
+
+      const toggle = (e) => {
+        try { e.preventDefault(); } catch (_) {}
+        try { e.stopPropagation(); } catch (_) {}
+        panel.classList.toggle("open");
+      };
+
+      // iPhone Safariで確実に反応させる
+      btnInfo.addEventListener("pointerdown", toggle, { passive: false });
+      btnInfo.addEventListener("touchstart", toggle, { passive: false });
+      btnInfo.addEventListener("click", toggle, { passive: false });
+
+      // 一度でも操作したら閉じる（没入優先）
+      const closeOnce = () => {
+        panel.classList.remove("open");
+        window.removeEventListener("pointerdown", closeOnce, true);
+        window.removeEventListener("touchstart", closeOnce, true);
+      };
+      window.addEventListener("pointerdown", closeOnce, true);
+      window.addEventListener("touchstart", closeOnce, { passive: true, capture: true });
+    })();
+
+    // ---- Reset (アプリ側に reset があれば呼ぶ / 無ければページリロード) ----
+    (function () {
+      const btnReset = document.getElementById("btnReset");
+      if (!btnReset) return;
+
+      const onReset = (e) => {
+        try { e.preventDefault(); } catch (_) {}
+        try { e.stopPropagation(); } catch (_) {}
+
+        // 1) app.reset() があるケース
+        if (window.app && typeof window.app.reset === "function") {
+          window.app.reset();
+          return;
+        }
+        // 2) sketch側に globalReset があるケース
+        if (typeof window.globalReset === "function") {
+          window.globalReset();
+          return;
+        }
+        // 3) 最終手段：リロード（確実に復帰）
+        location.reload();
+      };
+
+      btnReset.addEventListener("pointerdown", onReset, { passive: false });
+      btnReset.addEventListener("touchstart", onReset, { passive: false });
+      btnReset.addEventListener("click", onReset, { passive: false });
+    })();
+
+    // ---- iOS対策：画面回転や復帰で canvas サイズがズレるのを防ぐ ----
+    (function () {
+      const c = document.getElementById("c");
+      const resize = () => {
+        // sketch.js側が resize を持っているなら委譲
+        if (window.app && typeof window.app.resize === "function") {
+          window.app.resize();
+          return;
+        }
+        // ない場合は canvas を viewport に合わせるだけ
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const w = Math.floor(window.innerWidth * dpr);
+        const h = Math.floor(window.innerHeight * dpr);
+        if (c.width !== w || c.height !== h) {
+          c.width = w; c.height = h;
+          c.style.width = "100vw";
+          c.style.height = "100vh";
+        }
+      };
+      window.addEventListener("resize", resize, { passive: true });
+      window.addEventListener("orientationchange", resize, { passive: true });
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) setTimeout(resize, 50);
+      }, { passive: true });
+      setTimeout(resize, 0);
+    })();
+  </script>
 </body>
 </html>
