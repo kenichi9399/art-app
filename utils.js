@@ -1,20 +1,33 @@
-// utils.js
-(() => {
-  const U = (window.U = window.U || {});
+;(() => {
+  const U = {};
 
-  U.clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
-  U.lerp = (a, b, t) => a + (b - a) * t;
-  U.randf = (a = 0, b = 1) => a + (b - a) * Math.random();
-  U.randi = (a, b) => (a + (Math.random() * (b - a + 1)) | 0);
+  U.clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  U.lerp  = (a, b, t) => a + (b - a) * t;
 
-  // ✅ input.js が先に走っても落ちないように「後からでも必ず関数化」
-  if (typeof U.v2 !== "function") U.v2 = (x = 0, y = 0) => ({ x, y });
+  U.rand = (a = 0, b = 1) => a + Math.random() * (b - a);
+  U.randi = (a, b) => (a + Math.floor(Math.random() * (b - a + 1)));
 
-  U.len = (x, y) => Math.hypot(x, y);
-  U.norm = (x, y) => {
-    const l = Math.hypot(x, y) || 1e-9;
-    return [x / l, y / l];
+  U.v2 = (x = 0, y = 0) => ({ x, y });
+  U.add = (p, q) => ({ x: p.x + q.x, y: p.y + q.y });
+  U.sub = (p, q) => ({ x: p.x - q.x, y: p.y - q.y });
+  U.mul = (p, s) => ({ x: p.x * s, y: p.y * s });
+  U.len = (p) => Math.hypot(p.x, p.y);
+  U.norm = (p) => {
+    const l = U.len(p) || 1e-9;
+    return { x: p.x / l, y: p.y / l };
   };
 
-  U.now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+  U.smoothstep = (a, b, x) => {
+    const t = U.clamp((x - a) / (b - a), 0, 1);
+    return t * t * (3 - 2 * t);
+  };
+
+  U.now = () => performance.now();
+
+  // iOS Safariの“タップでスクロール/ズーム”を抑えたい箇所で使う
+  U.noDefault = (ev) => {
+    if (ev && ev.cancelable) ev.preventDefault();
+  };
+
+  window.U = U;
 })();
