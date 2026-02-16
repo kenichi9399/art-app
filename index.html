@@ -2,157 +2,88 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <meta name="theme-color" content="#000000" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0c0f" />
   <title>Touching Light — Quiet Luxury</title>
-
   <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
-      -webkit-user-select: none;
-      user-select: none;
-    }
-    #c {
-      position: fixed;
-      inset: 0;
-      width: 100vw;
-      height: 100vh;
-      display: block;
-      touch-action: none; /* iOS Safariで重要 */
-    }
+    html, body { margin:0; padding:0; height:100%; background:#0b0c0f; overflow:hidden; }
+    body { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+    canvas { position:fixed; inset:0; width:100vw; height:100vh; display:block; }
 
-    /* UI */
-    .ui {
+    .hud {
       position: fixed;
-      left: 18px;
-      top: 18px;
-      right: 18px;
-      display: flex;
-      gap: 14px;
-      align-items: flex-start;
-      pointer-events: none; /* canvas操作を邪魔しない */
-      z-index: 10;
-    }
-    .card {
-      pointer-events: none;
-      flex: 1;
-      max-width: 520px;
-      padding: 20px 22px;
-      border-radius: 22px;
-      background: rgba(20, 20, 24, 0.55);
-      border: 1px solid rgba(255,255,255,0.08);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      color: rgba(255,255,255,0.92);
-      box-shadow: 0 16px 40px rgba(0,0,0,0.35);
-    }
-    .title {
-      font-family: ui-serif, "Times New Roman", serif;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-      font-size: 44px;
-      line-height: 1.05;
-      margin: 0 0 10px 0;
-    }
-    .sub {
-      font-family: ui-sans-serif, -apple-system, system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
-      font-size: 16px;
-      opacity: 0.78;
-      margin: 0 0 8px 0;
-    }
-    .jp {
-      font-family: ui-sans-serif, -apple-system, system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
-      font-size: 15px;
-      opacity: 0.70;
-      margin: 0;
-    }
-
-    .btns {
-      margin-left: auto;
-      pointer-events: auto; /* ボタンだけ押せる */
+      left: 14px;
+      top: 14px;
       display: flex;
       gap: 12px;
       align-items: flex-start;
+      z-index: 10;
+      pointer-events: none; /* ここ重要: ただしボタンだけ個別に有効化 */
     }
-    button {
-      appearance: none;
-      border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(20, 20, 24, 0.55);
-      color: rgba(255,255,255,0.90);
+    .card {
+      pointer-events: none;
+      max-width: 70vw;
+      padding: 16px 18px;
       border-radius: 18px;
-      padding: 14px 18px;
-      font-size: 18px;
-      font-weight: 600;
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      box-shadow: 0 14px 34px rgba(0,0,0,0.35);
+      background: rgba(22,24,30,0.62);
+      border: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: rgba(255,255,255,0.92);
+      box-shadow: 0 14px 40px rgba(0,0,0,0.35);
+      font-family: ui-serif, "Georgia", "Times New Roman", serif;
+    }
+    .title { font-size: 34px; font-weight: 600; letter-spacing: 0.02em; line-height: 1.05; margin: 0 0 10px; }
+    .sub   { font-size: 18px; opacity: 0.85; margin: 0 0 8px; font-family: ui-sans-serif, system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+    .desc  { font-size: 16px; opacity: 0.72; margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+
+    .btns { display:flex; gap:10px; pointer-events: auto; }
+    button {
+      pointer-events: auto;
+      padding: 12px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(22,24,30,0.62);
+      color: rgba(255,255,255,0.92);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      font-size: 16px;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+      box-shadow: 0 14px 40px rgba(0,0,0,0.35);
     }
     button:active { transform: translateY(1px); }
-
-    /* error toast */
-    #err {
+    .rightTop {
       position: fixed;
-      left: 18px;
-      right: 18px;
-      bottom: 18px;
-      padding: 14px 16px;
-      border-radius: 14px;
-      background: rgba(120, 20, 20, 0.78);
-      color: rgba(255,255,255,0.95);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 14px;
-      line-height: 1.35;
-      display: none;
-      z-index: 999;
-      pointer-events: none;
+      right: 14px;
+      top: 14px;
+      z-index: 10;
+      pointer-events: auto;
     }
   </style>
 </head>
-
 <body>
   <canvas id="c"></canvas>
 
-  <div class="ui">
+  <div class="hud">
     <div class="card">
       <h1 class="title">Touching Light — Quiet Luxury</h1>
       <p class="sub">tap / drag / long-press</p>
-      <p class="jp">静かな粒子と光の核が、触れ方で変わります</p>
-    </div>
-
-    <div class="btns">
-      <button id="btnReset" type="button">Reset</button>
+      <p class="desc">静かな粒子と光の核が、触れ方で変わります</p>
     </div>
   </div>
 
-  <div id="err"></div>
+  <div class="rightTop">
+    <button id="resetBtn" type="button">Reset</button>
+  </div>
 
-  <script>
-    // 画面下にエラーを出す（iPhoneでデバッグしやすい）
-    (function(){
-      const box = document.getElementById('err');
-      window.addEventListener('error', (e) => {
-        box.style.display = 'block';
-        box.textContent = String(e.message || e.error || e);
-      });
-      window.addEventListener('unhandledrejection', (e) => {
-        box.style.display = 'block';
-        box.textContent = String(e.reason || e);
-      });
-    })();
-  </script>
-
-  <!-- ✅ 読み込み順が重要：utils → cfg → input → field → particles → void_shadow → render → sketch -->
-  <script src="./utils.js"></script>
-  <script src="./cfg.js"></script>
-  <script src="./input.js"></script>
-  <script src="./field.js"></script>
-  <script src="./particles.js"></script>
-  <script src="./void_shadow.js"></script>
-  <script src="./render.js"></script>
-  <script src="./sketch.js"></script>
+  <!-- 依存順序が大事（iPhone Safari対策で module は使わない） -->
+  <script src="./cfg.js?v=1"></script>
+  <script src="./utils.js?v=1"></script>
+  <script src="./field.js?v=1"></script>
+  <script src="./particles.js?v=1"></script>
+  <script src="./void_shadow.js?v=1"></script>
+  <script src="./render.js?v=1"></script>
+  <script src="./input.js?v=1"></script>
+  <script src="./sketch.js?v=1"></script>
 </body>
 </html>
