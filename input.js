@@ -1,113 +1,157 @@
-;(() => {
+// input.js
+(() => {
+  "use strict";
+
   class Input {
     constructor(canvas) {
       this.canvas = canvas;
 
-      this.hasPointer = !!window.PointerEvent;
-
-      this.pos = U.v2(0, 0);
-      this.prev = U.v2(0, 0);
-      this.delta = U.v2(0, 0);
-
+      // state
       this.down = false;
-      this.justTapped = false;
+      this.id = null;
+      this.x = 0; this.y = 0;
+      this.px = 0; this.py = 0;
+      this.vx = 0; this.vy = 0;
 
-      this.longPress = false;
-      this._pressT = 0;
-      this._pressArmed = false;
+      this.tap = false;
+      this.dragging = false;
+      this.long = false;
+
+      this._tDown = 0;
+      this._lastMove = 0;
+
+      // iOS Safari: prevent scroll/zoom interfering
+      canvas.style.touchAction = "none";
 
       this._bind();
     }
 
     _bind() {
-      const c = this.canvas;
+      const el = this.canvas;
 
-      // 重要：iOSでtouchmoveを拾うには passive:false が必要
-      const opt = { passive: false };
-
-      const getXY = (ev) => {
-        const r = c.getBoundingClientRect();
-        let x, y;
-
-        if (ev.touches && ev.touches.length) {
-          x = ev.touches[0].clientX;
-          y = ev.touches[0].clientY;
-        } else {
-          x = ev.clientX;
-          y = ev.clientY;
-        }
-        return U.v2(x - r.left, y - r.top);
+      const getXY = (e) => {
+        const r = el.getBoundingClientRect();
+        const cx = (e.clientX - r.left);
+        const cy = (e.clientY - r.top);
+        return { cx, cy };
       };
 
-      const onDown = (ev) => {
-        U.noDefault(ev);
+      const onDown = (e) => {
+        // ignore multi-touch extra
+        if (this.down) return;
 
-        const p = getXY(ev);
+        // allow buttons overlay to work
+        // (canvas only receives events when touching canvas)
+        e.preventDefault();
+
+        const p = getXY(e);
         this.down = true;
-        this.justTapped = true;
+        this.id = e.pointerId ?? "mouse";
+        this.x = this.px = p.cx;
+        this.y = this.py = p.cy;
+        this.vx = this.vy = 0;
+        this.tap = true;
+        this.dragging = false;
+        this.long = false;
+        this._tDown = U.now();
+        this._lastMove = this._tDown;
 
-        this.prev = p;
-        this.pos = p;
-        this.delta = U.v2(0, 0);
-
-        this._pressT = 0;
-        this._pressArmed = true;
-        this.longPress = false;
+        try { el.setPointerCapture?.(this.id); } catch (_) {}
       };
 
-      const onMove = (ev) => {
-        U.noDefault(ev);
-        const p = getXY(ev);
+      const onMove = (e) => {
+        if (!this.down) return;
+        if (e.pointerId != null && this.id != null && e.pointerId !== this.id) return;
 
-        this.pos = p;
-        this.delta = U.sub(this.pos, this.prev);
-        this.prev = this.pos;
+        e.preventDefault();
+
+        const p = getXY(e);
+        const nx = p.cx, ny = p.cy;
+
+        const now = U.now();
+        const dt = Math.max(1, now - this._lastMove);
+        this._lastMove = now;
+
+        this.vx = (nx - this.x) / dt;
+        this.vy = (ny - this.y) / dt;
+
+        this.px = this.x; this.py = this.y;
+        this.x = nx; this.y = ny;
+
+        const moved = Math.hypot(this.x - this.px, this.y - this.py);
+        if (moved > 1.2) {
+          this.tap = false;
+          this.dragging = true;
+        }
+
+        // long press check
+        if (!this.long && !this.dragging) {
+          if (now - this._tDown >= CFG.LONGPRESS_MS) {
+            this.long = true;
+            this.tap = false;
+          }
+        }
       };
 
-      const onUp = (ev) => {
-        U.noDefault(ev);
+      const onUp = (e) => {
+        if (!this.down) return;
+        if (e.pointerId != null && this.id != null && e.pointerId !== this.id) return;
+
+        e.preventDefault();
+
+        // release
         this.down = false;
-        this._pressArmed = false;
-        this.longPress = false;
+        this.id = null;
+
+        // keep tap flag for one frame only (handled in consume())
       };
 
-      if (this.hasPointer) {
-        c.addEventListener("pointerdown", onDown, opt);
-        window.addEventListener("pointermove", onMove, opt);
-        window.addEventListener("pointerup", onUp, opt);
-        window.addEventListener("pointercancel", onUp, opt);
-      } else {
-        c.addEventListener("touchstart", onDown, opt);
-        window.addEventListener("touchmove", onMove, opt);
-        window.addEventListener("touchend", onUp, opt);
-        window.addEventListener("touchcancel", onUp, opt);
+      // Pointer events (modern iOS Safari OK)
+      el.addEventListener("pointerdown", onDown, { passive: false });
+      el.addEventListener("pointermove", onMove, { passive: false });
+      el.addEventListener("pointerup", onUp, { passive: false });
+      el.addEventListener("pointercancel", onUp, { passive: false });
 
-        c.addEventListener("mousedown", onDown, opt);
-        window.addEventListener("mousemove", onMove, opt);
-        window.addEventListener("mouseup", onUp, opt);
-      }
+      // Fallback touch (older / weird cases)
+      el.addEventListener("touchstart", (ev) => {
+        if (this.down) return;
+        const t = ev.changedTouches[0];
+        onDown({ clientX: t.clientX, clientY: t.clientY, preventDefault: () => ev.preventDefault() });
+      }, { passive: false });
 
-      // 画面スクロール/ダブルタップズームを抑制（iOS）
-      c.addEventListener("gesturestart", U.noDefault, opt);
-      c.addEventListener("gesturechange", U.noDefault, opt);
-      c.addEventListener("gestureend", U.noDefault, opt);
+      el.addEventListener("touchmove", (ev) => {
+        if (!this.down) return;
+        const t = ev.changedTouches[0];
+        onMove({ clientX: t.clientX, clientY: t.clientY, preventDefault: () => ev.preventDefault() });
+      }, { passive: false });
+
+      el.addEventListener("touchend", (ev) => {
+        if (!this.down) return;
+        ev.preventDefault();
+        onUp({ preventDefault: () => ev.preventDefault() });
+      }, { passive: false });
+
+      el.addEventListener("touchcancel", (ev) => {
+        if (!this.down) return;
+        ev.preventDefault();
+        onUp({ preventDefault: () => ev.preventDefault() });
+      }, { passive: false });
     }
 
-    update(dt) {
-      this.justTapped = false; // 毎フレームで消す（tapはdown時にだけ立つ）
-
-      // long-press 判定
-      if (this.down && this._pressArmed) {
-        this._pressT += dt;
-        if (!this.longPress && this._pressT > 0.32) {
-          this.longPress = true;
-        }
-      }
-      if (!this.down) {
-        this._pressT = 0;
-        this._pressArmed = false;
-        this.longPress = false;
-      }
+    // 1フレームだけtap/long開始を通知したい時に使う
+    consume() {
+      const out = {
+        down: this.down,
+        x: this.x, y: this.y,
+        px: this.px, py: this.py,
+        vx: this.vx, vy: this.vy,
+        tap: this.tap,
+        dragging: this.dragging,
+        long: this.long,
+      };
+      // tapは“発火したら消す”
+      this.tap = false;
+      return out;
     }
   }
 
